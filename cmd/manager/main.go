@@ -131,12 +131,18 @@ func main() {
 
 	// Setup all Controllers
 	if err := controller.AddToManager(mgr); err != nil {
-		log.Error(err, "")
+		log.Error(err, "AddToManager returned an error")
 		os.Exit(1)
 	}
 
+	// Setup config and client for propagator to talk to the apiserver
+	var generatedClient kubernetes.Interface = kubernetes.NewForConfigOrDie(mgr.GetConfig())
+	propagator.Initialize(cfg, &generatedClient)
+
 	cache := mgr.GetCache()
 
+	// The following index for the PlacementRef Name is being added to the
+	// client cache to improve the performance of querying PlacementBindings
 	indexFunc := func(obj k8sruntime.Object) []string {
 		return []string{obj.(*v1.PlacementBinding).PlacementRef.Name}
 	}
@@ -144,10 +150,6 @@ func main() {
 	if err := cache.IndexField(ctx, &v1.PlacementBinding{}, "placementRef.name", indexFunc); err != nil {
 		panic(err)
 	}
-
-	// Setup config and client for propagator to talk to the apiserver
-	var generatedClient kubernetes.Interface = kubernetes.NewForConfigOrDie(mgr.GetConfig())
-	propagator.Initialize(cfg, &generatedClient)
 
 	log.Info("Starting the Cmd.")
 
