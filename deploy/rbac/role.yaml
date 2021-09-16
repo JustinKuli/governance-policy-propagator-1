@@ -63,6 +63,18 @@ rules:
 - apiGroups:
   - policy.open-cluster-management.io
   resources:
+  - placementbindings
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - policy.open-cluster-management.io
+  resources:
   - policies
   verbs:
   - create
