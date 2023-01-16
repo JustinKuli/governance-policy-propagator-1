@@ -310,6 +310,25 @@ e2e-debug:
 	@echo remote controller log:
 	-kubectl logs $$(kubectl get pods -n $(KIND_NAMESPACE) -o name | grep $(IMG)) -n $(KIND_NAMESPACE) -c governance-policy-propagator
 
+.PHONY: e2e-build-pprof
+e2e-build-pprof:
+	go test -c -tags e2e ./ -o build/_output/bin/$(IMG)-pprof
+
+.PHONY: e2e-run-pprof
+e2e-run-pprof: e2e-build-pprof
+	WATCH_NAMESPACE="$(WATCH_NAMESPACE)" ./build/_output/bin/$(IMG)-pprof -test.run "^TestRunMain$$" > build/_output/controller.log 2> build/_output/controller.err.log &
+
+.PHONY: e2e-stop-pprof
+e2e-stop-pprof:
+	ps -ef | grep '$(IMG)' | grep -v grep | awk '{print $$2}' | xargs kill
+
+.PHONY: do-perf-test
+do-perf-test: e2e-run-pprof perf-test e2e-stop-pprof
+
+.PHONY: perf-test
+perf-test: e2e-dependencies
+	$(GINKGO) -v --fail-fast --slow-spec-threshold=600s test/performance
+
 ############################################################
 # test coverage
 ############################################################

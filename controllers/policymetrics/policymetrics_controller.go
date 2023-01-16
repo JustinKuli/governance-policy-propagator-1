@@ -61,6 +61,9 @@ func (r *MetricReconciler) Reconcile(ctx context.Context, request ctrl.Request) 
 		return reconcile.Result{}, err
 	}
 
+	// Check len(clusterList.Items) and possibly unregister the policyStatusGauge?
+	// Will that correctly dispose of the existing time series?
+
 	var promLabels map[string]string
 
 	if common.IsInClusterNamespace(request.Namespace, clusterList.Items) {
