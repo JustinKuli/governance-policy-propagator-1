@@ -7,6 +7,8 @@
 package main
 
 import (
+	"net/http"
+	_ "net/http/pprof"
 	"os"
 	"testing"
 )
@@ -15,6 +17,11 @@ import (
 // E2E/Integration tests. Controller CLI flags are also passed in here.
 func TestRunMain(t *testing.T) {
 	os.Args = append(os.Args, "--leader-elect=false")
+
+	// the pprof server will run here
+	go func() {
+		log.Error(http.ListenAndServe("localhost:6060", nil), "Problem serving localhost:6060")
+	}()
 
 	main()
 }
