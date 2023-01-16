@@ -21,8 +21,11 @@ var policyStatusGauge = prometheus.NewGaugeVec(
 	},
 )
 
+var policyStatusGaugeRegistered bool
+
 func init() {
 	metrics.Registry.MustRegister(
 		policyStatusGauge,
 	)
+	policyStatusGaugeRegistered = true
 }
