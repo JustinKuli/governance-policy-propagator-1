@@ -329,9 +329,7 @@ func main() {
 
 // reportMetrics returns a bool on whether to report GRC metrics from the propagator
 func reportMetrics() bool {
-	metrics, _ := os.LookupEnv("DISABLE_REPORT_METRICS")
-
-	return !strings.EqualFold(metrics, "true")
+	return false
 }
 
 // getWatchNamespace returns the Namespace the operator should be watching for changes
