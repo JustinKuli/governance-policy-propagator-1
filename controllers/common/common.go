@@ -102,7 +102,7 @@ func GetRetryOptions(logger logr.Logger, retryMsg string, attempts uint) []retry
 // GetClusterPlacementDecisions return the placement decisions from cluster
 // placement decisions
 func GetClusterPlacementDecisions(
-	c client.Client, pb policiesv1.PlacementBinding, instance *policiesv1.Policy, log logr.Logger,
+	c client.Client, pb policiesv1.PlacementBinding, instance policiesv1.Policy, log logr.Logger,
 ) ([]appsv1.PlacementDecision, error) {
 	log = log.WithValues("name", pb.PlacementRef.Name, "namespace", instance.GetNamespace())
 	pl := &clusterv1beta1.Placement{}
@@ -151,7 +151,7 @@ func GetClusterPlacementDecisions(
 // GetApplicationPlacementDecisions return the placement decisions from an application
 // lifecycle placementrule
 func GetApplicationPlacementDecisions(
-	c client.Client, pb policiesv1.PlacementBinding, instance *policiesv1.Policy, log logr.Logger,
+	c client.Client, pb policiesv1.PlacementBinding, instance policiesv1.Policy, log logr.Logger,
 ) ([]appsv1.PlacementDecision, error) {
 	log = log.WithValues("name", pb.PlacementRef.Name, "namespace", instance.GetNamespace())
 	plr := &appsv1.PlacementRule{}

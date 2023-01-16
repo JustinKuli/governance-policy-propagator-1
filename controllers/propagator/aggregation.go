@@ -17,7 +17,7 @@ import (
 // will be marked as NonCompliant in the result. The result is sorted by cluster name. An error
 // will be returned if lookup of the replicated policies fails, and the retries also fail.
 func (r *PolicyReconciler) calculatePerClusterStatus(
-	instance *policiesv1.Policy, failedClusters decisionSet,
+	instance policiesv1.Policy, failedClusters decisionSet,
 ) ([]*policiesv1.CompliancePerClusterStatus, error) {
 	if instance.Spec.Disabled {
 		return nil, nil

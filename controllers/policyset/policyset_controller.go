@@ -131,9 +131,9 @@ func (r *PolicySetReconciler) processPolicySet(ctx context.Context, plcSet *poli
 			Namespace: plcSet.Namespace,
 		}
 
-		childPlc := &policyv1.Policy{}
+		childPlc := policyv1.Policy{}
 
-		err := r.Client.Get(ctx, childNamespacedName, childPlc)
+		err := r.Client.Get(ctx, childNamespacedName, &childPlc)
 		if err != nil {
 			// policy does not exist, log error message and generate event
 			var errMessage string
@@ -235,7 +235,7 @@ func (r *PolicySetReconciler) processPolicySet(ctx context.Context, plcSet *poli
 	}
 
 	if !equality.Semantic.DeepEqual(plcSet.Status, builtStatus) {
-		plcSet.Status = *builtStatus.DeepCopy()
+		plcSet.Status = builtStatus
 		needsUpdate = true
 	}
 
@@ -300,7 +300,7 @@ func showCompliance(compliancesFound []string, unknown []string, pending []strin
 
 // getDecisions gets the PlacementDecisions for a PlacementBinding
 func getDecisions(c client.Client, pb policyv1.PlacementBinding,
-	instance *policyv1.Policy,
+	instance policyv1.Policy,
 ) ([]appsv1.PlacementDecision, error) {
 	if pb.PlacementRef.APIGroup == appsv1.SchemeGroupVersion.Group &&
 		pb.PlacementRef.Kind == "PlacementRule" {

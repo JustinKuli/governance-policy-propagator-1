@@ -109,7 +109,7 @@ func TestEquivalentReplicatedPolicies(t *testing.T) {
 
 	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {
-			if equivalentReplicatedPolicies(basePolicy, test.comparePlc) != test.expected {
+			if equivalentReplicatedPolicies(*basePolicy, *test.comparePlc) != test.expected {
 				if test.expected {
 					t.Fatalf("Expected policies to be equivalent: %+v, %+v", basePolicy, test.comparePlc)
 				} else {
@@ -304,7 +304,7 @@ func TestGetPolicySetDependencies(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			testpol := fakePolicyWithDeps("testpolicy", "testns", test.inputDeps, test.inputExtraDeps)
 
-			got := getPolicySetDependencies(testpol)
+			got := getPolicySetDependencies(*testpol)
 			if !reflect.DeepEqual(got, test.want) {
 				t.Fatalf("expected: %v, got: %v", test.want, got)
 			}

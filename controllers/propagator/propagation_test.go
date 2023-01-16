@@ -145,7 +145,7 @@ type MockPolicyReconciler struct {
 }
 
 func (r MockPolicyReconciler) handleDecision(
-	instance *policiesv1.Policy, decision appsv1.PlacementDecision,
+	instance policiesv1.Policy, decision appsv1.PlacementDecision,
 ) (
 	map[k8sdepwatches.ObjectIdentifier]bool, error,
 ) {
@@ -206,7 +206,7 @@ func TestHandleDecisionWrapper(t *testing.T) {
 			close(decisionsChan)
 		}()
 
-		handleDecisionWrapper(reconciler, &policy, decisionsChan, resultsChan)
+		handleDecisionWrapper(reconciler, policy, decisionsChan, resultsChan)
 
 		// Expect a 1x1 mapping of results to decisions.
 		if len(resultsChan) != len(decisions) {
@@ -241,7 +241,7 @@ func TestHandleDecisionWrapper(t *testing.T) {
 }
 
 func (r MockPolicyReconciler) deletePolicy(
-	instance *policiesv1.Policy,
+	instance policiesv1.Policy,
 ) error {
 	return r.Err
 }

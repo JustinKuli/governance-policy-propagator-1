@@ -108,16 +108,16 @@ func (r *PolicyReconciler) Reconcile(ctx context.Context, request ctrl.Request) 
 	log.Info("Reconciling the policy")
 
 	// Fetch the Policy instance
-	instance := &policiesv1.Policy{}
+	instance := policiesv1.Policy{}
 
-	err := r.Get(ctx, request.NamespacedName, instance)
+	err := r.Get(ctx, request.NamespacedName, &instance)
 	if err != nil {
 		if errors.IsNotFound(err) {
 			// Request object not found, could have been deleted after reconcile request.
 			// Owned objects are automatically garbage collected.
 			log.Info("Policy not found, so it may have been deleted. Deleting the replicated policies.")
 
-			err := r.cleanUpPolicy(&policiesv1.Policy{
+			err := r.cleanUpPolicy(policiesv1.Policy{
 				TypeMeta: metav1.TypeMeta{
 					Kind:       policiesv1.Kind,
 					APIVersion: policiesv1.GroupVersion.Group + "/" + policiesv1.GroupVersion.Version,
@@ -176,7 +176,7 @@ func (r *PolicyReconciler) Reconcile(ctx context.Context, request ctrl.Request) 
 
 	log.Info("The policy was found in the cluster namespace but doesn't belong to any root policy, deleting it")
 
-	err = r.Delete(ctx, instance)
+	err = r.Delete(ctx, &instance)
 	if err != nil && !errors.IsNotFound(err) {
 		log.Error(err, "Failed to delete the policy")
 

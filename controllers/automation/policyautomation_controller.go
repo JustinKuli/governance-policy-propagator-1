@@ -182,7 +182,7 @@ func (r *PolicyAutomationReconciler) getViolationContext(
 	err = r.List(
 		context.TODO(),
 		replicatedPlcList,
-		client.MatchingLabels(propagator.LabelsForRootPolicy(policy)),
+		client.MatchingLabels(propagator.LabelsForRootPolicy(*policy)),
 	)
 	if err != nil {
 		log.Error(err, "Failed to list the replicated policies")

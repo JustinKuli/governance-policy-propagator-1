@@ -124,7 +124,7 @@ K8S_VERSION = 1.21.2
 
 .PHONY: test
 test: test-dependencies
-	KUBEBUILDER_ASSETS=$(LOCAL_BIN) go test $(TESTARGS) `go list ./... | grep -v test/e2e`
+	KUBEBUILDER_ASSETS=$(LOCAL_BIN) go test $(TESTARGS) `go list ./... | grep -v test/e2e | grep -v test/performance`
 
 .PHONY: test-coverage
 test-coverage: TESTARGS = -json -cover -covermode=atomic -coverprofile=coverage_unit.out

@@ -17,18 +17,18 @@ import (
 )
 
 // LabelsForRootPolicy returns the labels for given policy
-func LabelsForRootPolicy(plc *policiesv1.Policy) map[string]string {
+func LabelsForRootPolicy(plc policiesv1.Policy) map[string]string {
 	return map[string]string{common.RootPolicyLabel: fullNameForPolicy(plc)}
 }
 
 // fullNameForPolicy returns the fully qualified name for given policy
 // full qualified name: ${namespace}.${name}
-func fullNameForPolicy(plc *policiesv1.Policy) string {
+func fullNameForPolicy(plc policiesv1.Policy) string {
 	return plc.GetNamespace() + "." + plc.GetName()
 }
 
 // equivalentReplicatedPolicies compares replicated policies. Returns true if they match.
-func equivalentReplicatedPolicies(plc1 *policiesv1.Policy, plc2 *policiesv1.Policy) bool {
+func equivalentReplicatedPolicies(plc1 policiesv1.Policy, plc2 policiesv1.Policy) bool {
 	// Compare annotations
 	if !equality.Semantic.DeepEqual(plc1.GetAnnotations(), plc2.GetAnnotations()) {
 		return false
@@ -47,8 +47,8 @@ func equivalentReplicatedPolicies(plc1 *policiesv1.Policy, plc2 *policiesv1.Poli
 // In particular, it adds labels that the policy framework uses, and ensures that policy dependencies
 // are in a consistent format suited for use on managed clusters.
 func (r *PolicyReconciler) buildReplicatedPolicy(
-	root *policiesv1.Policy, decision appsv1.PlacementDecision,
-) (*policiesv1.Policy, error) {
+	root policiesv1.Policy, decision appsv1.PlacementDecision,
+) (policiesv1.Policy, error) {
 	replicatedName := fullNameForPolicy(root)
 
 	replicated := root.DeepCopy()
@@ -74,18 +74,18 @@ func (r *PolicyReconciler) buildReplicatedPolicy(
 
 	replicated.Spec.Dependencies, err = r.canonicalizeDependencies(replicated.Spec.Dependencies, root.Namespace)
 	if err != nil {
-		return replicated, err
+		return *replicated, err
 	}
 
 	for i, template := range replicated.Spec.PolicyTemplates {
 		replicated.Spec.PolicyTemplates[i].ExtraDependencies, err = r.canonicalizeDependencies(
 			template.ExtraDependencies, root.Namespace)
 		if err != nil {
-			return replicated, err
+			return *replicated, err
 		}
 	}
 
-	return replicated, nil
+	return *replicated, nil
 }
 
 // depIsPolicySet returns true if the given PolicyDependency is a PolicySet
@@ -171,7 +171,7 @@ func (r *PolicyReconciler) canonicalizeDependencies(
 
 // getPolicySetDependencies find all dependencies and extraDependencies in the given policy that
 // are PolicySets, since those objects will need to be watched.
-func getPolicySetDependencies(root *policiesv1.Policy) map[k8sdepwatches.ObjectIdentifier]bool {
+func getPolicySetDependencies(root policiesv1.Policy) map[k8sdepwatches.ObjectIdentifier]bool {
 	policySetIDs := make(map[k8sdepwatches.ObjectIdentifier]bool)
 
 	for _, dep := range root.Spec.Dependencies {
