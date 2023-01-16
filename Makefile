@@ -316,7 +316,7 @@ e2e-build-pprof:
 
 .PHONY: e2e-run-pprof
 e2e-run-pprof: e2e-build-pprof
-	WATCH_NAMESPACE="$(WATCH_NAMESPACE)" ./build/_output/bin/$(IMG)-pprof -test.run "^TestRunMain$$" > build/_output/controller.log 2> build/_output/controller.err.log &
+	WATCH_NAMESPACE="$(WATCH_NAMESPACE)" ./build/_output/bin/$(IMG)-pprof -test.run "^TestRunMain$$" > test/performance/out/controller.log 2> test/performance/out/controller.err.log &
 
 .PHONY: e2e-stop-pprof
 e2e-stop-pprof:

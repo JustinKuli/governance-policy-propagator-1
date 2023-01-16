@@ -40,6 +40,7 @@ jobs:
         make do-perf-test
 
     - name: Upload performance artifacts
+      if: ${{ always() }}
       uses: actions/upload-artifact@v3
       with:
         name: propagator-performance-output

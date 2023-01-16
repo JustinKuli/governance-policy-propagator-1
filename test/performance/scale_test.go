@@ -26,6 +26,8 @@ import (
 	appsv1 "open-cluster-management.io/multicloud-operators-subscription/pkg/apis/apps/placementrule/v1"
 )
 
+const myTimeFmt = "2006-01-02T15.04.05Z07"
+
 var _ = Describe("Performance information gathering", Ordered, func() {
 	policyNames := []string{
 		"snivy",
@@ -80,7 +82,7 @@ var _ = Describe("Performance information gathering", Ordered, func() {
 			Expect(os.IsNotExist(err))
 		} else {
 			By("saving old output")
-			os.Rename("./out", "out-bak-"+time.Now().Format(time.RFC3339))
+			os.Rename("./out", "out-bak-"+time.Now().Format(myTimeFmt))
 		}
 
 		By("Creating a new output directory")
@@ -102,17 +104,21 @@ var _ = Describe("Performance information gathering", Ordered, func() {
 		Expect(err).To(BeNil())
 
 		go func() {
-			for i := 0; true; i++ {
+			for i := 0; i < 360; i++ { // max 1 hour, just for safety
+				loopstart := time.Now()
+
 				select {
 				case <-metricsPollCtx.Done():
 					return
 				default:
+					name := fmt.Sprintf("./out/metrics/%v-at-%v.txt", i, time.Now().Format(myTimeFmt))
 					exec.Command(
 						"curl", "--silent",
-						"--output", "./out/metrics/"+strconv.Itoa(i),
+						"--output", name,
 						"localhost:8383/metrics",
 					).CombinedOutput()
-					time.Sleep(10 * time.Second)
+
+					time.Sleep(time.Until(loopstart.Add(10 * time.Second)))
 				}
 			}
 		}()
@@ -153,12 +159,12 @@ var _ = Describe("Performance information gathering", Ordered, func() {
 		clusterCount: 1000,
 		profileCount: 2,
 	}, {
-		// 	policyName:   policyNames[4],
-		// 	clusterCount: 1500,
-		// 	profileCount: 2,
-		// }, {
-		policyName:   policyNames[5],
+		policyName:   policyNames[4],
 		clusterCount: 2000,
+		profileCount: 2,
+	}, {
+		policyName:   policyNames[5],
+		clusterCount: 3000,
 		profileCount: 2,
 	}}
 
@@ -457,6 +463,7 @@ func setRandomCompliance(ctx context.Context, client dynamic.Interface, policyNa
 func chaos(ctx context.Context, policyName string, i, max int) {
 	client := NewKubeClientDynamic("", "", "")
 	for {
+		loopstart := time.Now()
 		select {
 		case <-ctx.Done():
 			return
@@ -467,6 +474,8 @@ func chaos(ctx context.Context, policyName string, i, max int) {
 			}
 
 			i = (i + 1) % max
+
+			time.Sleep(time.Until(loopstart.Add(2 * time.Second)))
 		}
 	}
 }
