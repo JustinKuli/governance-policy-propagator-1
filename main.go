@@ -329,7 +329,7 @@ func main() {
 
 // reportMetrics returns a bool on whether to report GRC metrics from the propagator
 func reportMetrics() bool {
-	return false
+	return true
 }
 
 // getWatchNamespace returns the Namespace the operator should be watching for changes

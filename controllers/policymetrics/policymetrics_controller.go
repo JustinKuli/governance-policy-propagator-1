@@ -98,8 +98,9 @@ func (r *MetricReconciler) Reconcile(ctx context.Context, request ctrl.Request) 
 	if err != nil {
 		if errors.IsNotFound(err) {
 			// Try to delete the gauge, but don't get hung up on errors. Log whether it was deleted.
-			statusGaugeDeleted := policyStatusGauge.Delete(promLabels)
-			log.Info("Policy not found. It must have been deleted.", "status-gauge-deleted", statusGaugeDeleted)
+			// statusGaugeDeleted := policyStatusGauge.Delete(promLabels)
+			// log.Info("Policy not found. It must have been deleted.", "status-gauge-deleted", statusGaugeDeleted)
+			log.V(1).Info("Would have deleted", "labels", promLabels)
 
 			return reconcile.Result{}, nil
 		}
@@ -113,26 +114,28 @@ func (r *MetricReconciler) Reconcile(ctx context.Context, request ctrl.Request) 
 
 	if pol.Spec.Disabled {
 		// The policy is no longer active, so delete its metric
-		statusGaugeDeleted := policyStatusGauge.Delete(promLabels)
-		log.V(1).Info("Metric removed for non-active policy", "status-gauge-deleted", statusGaugeDeleted)
+		// statusGaugeDeleted := policyStatusGauge.Delete(promLabels)
+		// log.V(1).Info("Metric removed for non-active policy", "status-gauge-deleted", statusGaugeDeleted)
+		log.V(1).Info("Would have deleted", "labels", promLabels)
 
 		return reconcile.Result{}, nil
 	}
 
 	log.V(2).Info("Got ComplianceState", "pol.Status.ComplianceState", pol.Status.ComplianceState)
 
-	statusMetric, err := policyStatusGauge.GetMetricWith(promLabels)
-	if err != nil {
-		log.Error(err, "Failed to get status metric from GaugeVec")
+	log.V(1).Info("Would have gotten and set metric for", "labels", promLabels)
+	// statusMetric, err := policyStatusGauge.GetMetricWith(promLabels)
+	// if err != nil {
+	// 	log.Error(err, "Failed to get status metric from GaugeVec")
 
-		return reconcile.Result{}, err
-	}
+	// 	return reconcile.Result{}, err
+	// }
 
-	if pol.Status.ComplianceState == policiesv1.Compliant {
-		statusMetric.Set(0)
-	} else if pol.Status.ComplianceState == policiesv1.NonCompliant {
-		statusMetric.Set(1)
-	}
+	// if pol.Status.ComplianceState == policiesv1.Compliant {
+	// 	statusMetric.Set(0)
+	// } else if pol.Status.ComplianceState == policiesv1.NonCompliant {
+	// 	statusMetric.Set(1)
+	// }
 
 	return reconcile.Result{}, nil
 }
