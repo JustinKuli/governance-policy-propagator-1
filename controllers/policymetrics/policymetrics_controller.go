@@ -13,6 +13,7 @@ import (
 	clusterv1 "open-cluster-management.io/api/cluster/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/metrics"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	policiesv1 "open-cluster-management.io/governance-policy-propagator/api/v1"
@@ -63,6 +64,12 @@ func (r *MetricReconciler) Reconcile(ctx context.Context, request ctrl.Request) 
 
 	// Check len(clusterList.Items) and possibly unregister the policyStatusGauge?
 	// Will that correctly dispose of the existing time series?
+	if len(clusterList.Items) > 500 {
+		if policyStatusGaugeRegistered {
+			policyStatusGaugeRegistered = !metrics.Registry.Unregister(policyStatusGauge)
+		}
+		return reconcile.Result{}, nil
+	}
 
 	var promLabels map[string]string
 
