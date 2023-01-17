@@ -4,10 +4,7 @@
 package propagator
 
 import (
-	"context"
-
 	"k8s.io/apimachinery/pkg/types"
-	clusterv1 "open-cluster-management.io/api/cluster/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
@@ -23,40 +20,23 @@ func policyMapper(c client.Client) handler.MapFunc {
 
 		log.V(2).Info("Reconcile request for a policy")
 
-		rootPlcName := object.GetLabels()[common.RootPolicyLabel]
+		isReplicated, err := common.IsReplicatedPolicy(c, object)
+		if err != nil {
+			log.Error(err, "Failed to determine if this queued policy is a replicated policy")
+
+			return nil
+		}
+
 		var name string
 		var namespace string
 
-		if rootPlcName != "" {
-			// policy.open-cluster-management.io/root-policy exists, should be a replicated policy
+		if isReplicated {
 			log.V(2).Info("Found reconciliation request from replicated policy")
 
-			var err error
-
-			name, namespace, err = common.ParseRootPolicyLabel(rootPlcName)
-			if err != nil {
-				log.Error(err, "Unable to parse name and namespace of root policy, ignoring replicated policy",
-					"rootPlcName", rootPlcName)
-
-				return nil
-			}
-
-			clusterList := &clusterv1.ManagedClusterList{}
-
-			err = c.List(context.TODO(), clusterList, &client.ListOptions{})
-			if err != nil {
-				log.Error(err, "failed to list ManagedCluster objects")
-
-				return nil
-			}
-			// do not handle a replicated policy which does not belong to the current cluster
-			if !common.IsInClusterNamespace(object.GetNamespace(), clusterList.Items) {
-				log.V(2).Info("Found a replicated policy in non-cluster namespace, skipping it")
-
-				return nil
-			}
+			rootPlcName := object.GetLabels()[common.RootPolicyLabel]
+			// Skip error checking since IsReplicatedPolicy verified this already
+			name, namespace, _ = common.ParseRootPolicyLabel(rootPlcName)
 		} else {
-			// policy.open-cluster-management.io/root-policy doesn't exist, should be a root policy
 			log.V(2).Info("Found reconciliation request from root policy")
 
 			name = object.GetName()
