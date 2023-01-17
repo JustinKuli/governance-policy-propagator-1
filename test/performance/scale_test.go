@@ -112,6 +112,7 @@ var _ = Describe("Performance information gathering", Ordered, func() {
 						"--output", "./out/metrics/"+strconv.Itoa(i),
 						"localhost:8383/metrics",
 					).CombinedOutput()
+					time.Sleep(10 * time.Second)
 				}
 			}
 		}()
