@@ -1,7 +1,7 @@
 apiVersion: policy.open-cluster-management.io/v1
 kind: Policy
 metadata:
-  name: case5-test-policy
+  name: case5.test-policy
 spec:
   remediationAction: inform
   disabled: false
@@ -30,7 +30,7 @@ placementRef:
 subjects:
 - apiGroup: policy.open-cluster-management.io
   kind: Policy
-  name: case5-test-policy
+  name: case5.test-policy
 ---
 apiVersion: apps.open-cluster-management.io/v1
 kind: PlacementRule
