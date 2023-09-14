@@ -65,7 +65,7 @@ type MockPolicyReconciler struct {
 }
 
 func (r MockPolicyReconciler) handleDecision(
-	_ *policiesv1.Policy, _ clusterDecision,
+	_ *policiesv1.Policy, _ clusterDecision, _ bool,
 ) (
 	map[k8sdepwatches.ObjectIdentifier]bool, error,
 ) {
@@ -127,7 +127,7 @@ func TestHandleDecisionWrapper(t *testing.T) {
 			close(decisionsChan)
 		}()
 
-		handleDecisionWrapper(reconciler, &policy, decisionsChan, resultsChan)
+		handleDecisionWrapper(reconciler, &policy, decisionsChan, resultsChan, true)
 
 		// Expect a 1x1 mapping of results to decisions.
 		if len(resultsChan) != len(clusterDecisions) {
@@ -355,7 +355,7 @@ func TestGetAllClusterDecisions(t *testing.T) {
 		t.Fatalf("Unexpected error building scheme: %v", err)
 	}
 
-	reconciler := &PolicyReconciler{
+	reconciler := &Propagator{
 		Client: fake.NewClientBuilder().
 			WithScheme(testscheme).
 			WithObjects(&prInitial, &prSub, &prSub2, &prExtended).

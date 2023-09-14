@@ -7,17 +7,16 @@ import (
 	"context"
 	"sync"
 
-	k8sdepwatches "github.com/stolostron/kubernetes-dependency-watches/client"
+	"k8s.io/apimachinery/pkg/api/equality"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/client-go/tools/record"
-	clusterv1beta1 "open-cluster-management.io/api/cluster/v1beta1"
-	appsv1 "open-cluster-management.io/multicloud-operators-subscription/pkg/apis/apps/placementrule/v1"
+	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	"sigs.k8s.io/controller-runtime/pkg/source"
 
@@ -26,51 +25,98 @@ import (
 	"open-cluster-management.io/governance-policy-propagator/controllers/common"
 )
 
-const ControllerName string = "policy-propagator"
-
-var log = ctrl.Log.WithName(ControllerName)
-
 //+kubebuilder:rbac:groups=policy.open-cluster-management.io,resources=policies,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=policy.open-cluster-management.io,resources=policies/status,verbs=get;update;patch
 //+kubebuilder:rbac:groups=policy.open-cluster-management.io,resources=policies/finalizers,verbs=update
-//+kubebuilder:rbac:groups=policy.open-cluster-management.io,resources=placementbindings,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=policy.open-cluster-management.io,resources=policysets,verbs=get;list;watch
-//+kubebuilder:rbac:groups=cluster.open-cluster-management.io,resources=managedclusters;placementdecisions;placements,verbs=get;list;watch
-//+kubebuilder:rbac:groups=apps.open-cluster-management.io,resources=placementrules,verbs=get;list;watch
+//+kubebuilder:rbac:groups=cluster.open-cluster-management.io,resources=managedclusters,verbs=get;list;watch
 //+kubebuilder:rbac:groups=core,resources=events,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=*,resources=*,verbs=get;list;watch
 
 // SetupWithManager sets up the controller with the Manager.
-func (r *PolicyReconciler) SetupWithManager(mgr ctrl.Manager, additionalSources ...source.Source) error {
+func (r *RootPolicyReconciler) SetupWithManager(mgr ctrl.Manager, additionalSources ...source.Source) error {
+	// policyPredicates filters out updates to policies that are pure status updates.
+	policyPredicates := func() predicate.Funcs {
+		return predicate.Funcs{
+			UpdateFunc: func(e event.UpdateEvent) bool {
+				//nolint:forcetypeassert
+				oldPolicy := e.ObjectOld.(*policiesv1.Policy)
+				//nolint:forcetypeassert
+				updatedPolicy := e.ObjectNew.(*policiesv1.Policy)
+
+				// Ignore pure status updates since those are handled by a separate controller
+				return oldPolicy.Generation != updatedPolicy.Generation ||
+					!equality.Semantic.DeepEqual(oldPolicy.ObjectMeta.Labels, updatedPolicy.ObjectMeta.Labels) ||
+					!equality.Semantic.DeepEqual(oldPolicy.ObjectMeta.Annotations, updatedPolicy.ObjectMeta.Annotations)
+			},
+		}
+	}
+
+	policySetMapper := func(_ client.Client) handler.MapFunc {
+		return func(ctx context.Context, object client.Object) []reconcile.Request {
+			log := log.WithValues("policySetName", object.GetName(), "namespace", object.GetNamespace())
+			log.V(2).Info("Reconcile Request for PolicySet")
+
+			var result []reconcile.Request
+
+			for _, plc := range object.(*policiesv1beta1.PolicySet).Spec.Policies {
+				log.V(2).Info("Found reconciliation request from a policyset", "policyName", string(plc))
+
+				request := reconcile.Request{NamespacedName: types.NamespacedName{
+					Name:      string(plc),
+					Namespace: object.GetNamespace(),
+				}}
+				result = append(result, request)
+			}
+
+			return result
+		}
+	}
+
+	// we only want to watch for policyset objects with Spec.Policies field change
+	policySetPredicateFuncs := predicate.Funcs{
+		UpdateFunc: func(e event.UpdateEvent) bool {
+			//nolint:forcetypeassert
+			policySetObjNew := e.ObjectNew.(*policiesv1beta1.PolicySet)
+			//nolint:forcetypeassert
+			policySetObjOld := e.ObjectOld.(*policiesv1beta1.PolicySet)
+
+			return !equality.Semantic.DeepEqual(policySetObjNew.Spec.Policies, policySetObjOld.Spec.Policies)
+		},
+		CreateFunc: func(e event.CreateEvent) bool {
+			return true
+		},
+		DeleteFunc: func(e event.DeleteEvent) bool {
+			return true
+		},
+	}
+
 	builder := ctrl.NewControllerManagedBy(mgr).
 		Named(ControllerName).
 		For(
 			&policiesv1.Policy{},
 			builder.WithPredicates(common.NeverEnqueue)).
+		// this workaround could be removed in the new idea
+		// predicates could ensure it only considers root policies, and ignore root status updates
+
 		// This is a workaround - the controller-runtime requires a "For", but does not allow it to
 		// modify the eventhandler. Currently we need to enqueue requests for Policies in a very
 		// particular way, so we will define that in a separate "Watches"
 		Watches(
 			&policiesv1.Policy{},
+			// "root" policies map to themselves
+			// "child" policies map to a reconcile of their root policy, but pure status updates are handled separately
+			// TODO: "child" policies will be handled separately from this controller
 			handler.EnqueueRequestsFromMapFunc(common.PolicyMapper(mgr.GetClient())),
 			builder.WithPredicates(policyPredicates())).
 		Watches(
 			&policiesv1beta1.PolicySet{},
+			//
 			handler.EnqueueRequestsFromMapFunc(policySetMapper(mgr.GetClient())),
-			builder.WithPredicates(policySetPredicateFuncs)).
-		Watches(
-			&policiesv1.PlacementBinding{},
-			handler.EnqueueRequestsFromMapFunc(placementBindingMapper(mgr.GetClient())),
-			builder.WithPredicates(pbPredicateFuncs)).
-		Watches(
-			&appsv1.PlacementRule{},
-			handler.EnqueueRequestsFromMapFunc(placementRuleMapper(mgr.GetClient()))).
-		Watches(
-			&clusterv1beta1.PlacementDecision{},
-			handler.EnqueueRequestsFromMapFunc(placementDecisionMapper(mgr.GetClient())),
-		)
+			builder.WithPredicates(policySetPredicateFuncs))
 
 	for _, source := range additionalSources {
+		// TODO: split out depWatches that only affect child policies (we can use mapper and predicate here)
 		builder.WatchesRawSource(source, &handler.EnqueueRequestForObject{})
 	}
 
@@ -78,15 +124,10 @@ func (r *PolicyReconciler) SetupWithManager(mgr ctrl.Manager, additionalSources 
 }
 
 // blank assignment to verify that ReconcilePolicy implements reconcile.Reconciler
-var _ reconcile.Reconciler = &PolicyReconciler{}
+var _ reconcile.Reconciler = &RootPolicyReconciler{}
 
-// PolicyReconciler reconciles a Policy object
-type PolicyReconciler struct {
-	client.Client
-	Scheme          *runtime.Scheme
-	Recorder        record.EventRecorder
-	DynamicWatcher  k8sdepwatches.DynamicWatcher
-	RootPolicyLocks *sync.Map
+type RootPolicyReconciler struct {
+	Propagator
 }
 
 // Reconcile reads that state of the cluster for a Policy object and makes changes based on the state read
@@ -94,7 +135,7 @@ type PolicyReconciler struct {
 // Note:
 // The Controller will requeue the Request to be processed again if the returned error is non-nil or
 // Result.Requeue is true, otherwise upon completion it will remove the work from the queue.
-func (r *PolicyReconciler) Reconcile(ctx context.Context, request ctrl.Request) (ctrl.Result, error) {
+func (r *RootPolicyReconciler) Reconcile(ctx context.Context, request ctrl.Request) (ctrl.Result, error) {
 	log := log.WithValues("Request.Namespace", request.Namespace, "Request.Name", request.Name)
 
 	log.V(3).Info("Acquiring the lock for the root policy")
@@ -157,7 +198,7 @@ func (r *PolicyReconciler) Reconcile(ctx context.Context, request ctrl.Request) 
 	}
 
 	if !inClusterNs {
-		err := r.handleRootPolicy(instance)
+		err := r.handleRootPolicy(instance, true)
 		if err != nil {
 			log.Error(err, "Failure during root policy handling")
 

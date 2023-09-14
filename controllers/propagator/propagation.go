@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	templates "github.com/stolostron/go-template-utils/v3/pkg/templates"
@@ -18,13 +19,16 @@ import (
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/json"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/record"
 	clusterv1 "open-cluster-management.io/api/cluster/v1"
 	clusterv1beta1 "open-cluster-management.io/api/cluster/v1beta1"
 	appsv1 "open-cluster-management.io/multicloud-operators-subscription/pkg/apis/apps/placementrule/v1"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	policiesv1 "open-cluster-management.io/governance-policy-propagator/api/v1"
@@ -51,10 +55,22 @@ var (
 	kubeClient           *kubernetes.Interface
 )
 
+const ControllerName string = "policy-propagator"
+
+var log = ctrl.Log.WithName(ControllerName)
+
 func Initialize(kubeconfig *rest.Config, kubeclient *kubernetes.Interface) {
 	kubeConfig = kubeconfig
 	kubeClient = kubeclient
 	concurrencyPerPolicy = getEnvVarPosInt(concurrencyPerPolicyEnvName, concurrencyPerPolicyDefault)
+}
+
+type Propagator struct {
+	client.Client
+	Scheme          *runtime.Scheme
+	Recorder        record.EventRecorder
+	DynamicWatcher  k8sdepwatches.DynamicWatcher
+	RootPolicyLocks *sync.Map
 }
 
 // getTemplateCfg returns the default policy template configuration.
@@ -86,7 +102,7 @@ func getEnvVarPosInt(name string, defaultValue int) int {
 	return defaultValue
 }
 
-func (r *PolicyReconciler) deletePolicy(plc *policiesv1.Policy) error {
+func (r *Propagator) deletePolicy(plc *policiesv1.Policy) error {
 	// #nosec G601 -- no memory addresses are stored in collections
 	err := r.Delete(context.TODO(), plc)
 	if err != nil && !k8serrors.IsNotFound(err) {
@@ -125,7 +141,7 @@ func plcDeletionWrapper(
 }
 
 // cleanUpPolicy will delete all replicated policies associated with provided policy.
-func (r *PolicyReconciler) cleanUpPolicy(instance *policiesv1.Policy) error {
+func (r *Propagator) cleanUpPolicy(instance *policiesv1.Policy) error {
 	log := log.WithValues("policyName", instance.GetName(), "policyNamespace", instance.GetNamespace())
 	replicatedPlcList := &policiesv1.PolicyList{}
 
@@ -224,7 +240,7 @@ type clusterDecision struct {
 }
 
 type decisionHandler interface {
-	handleDecision(instance *policiesv1.Policy, decision clusterDecision) (
+	handleDecision(instance *policiesv1.Policy, decision clusterDecision, checkFullSpec bool) (
 		templateRefObjs map[k8sdepwatches.ObjectIdentifier]bool, err error,
 	)
 }
@@ -252,6 +268,7 @@ func handleDecisionWrapper(
 	instance *policiesv1.Policy,
 	decisions <-chan clusterDecision,
 	results chan<- decisionResult,
+	checkFullSpec bool,
 ) {
 	for decision := range decisions {
 		log := log.WithValues(
@@ -262,7 +279,7 @@ func handleDecisionWrapper(
 		)
 		log.V(1).Info("Handling the decision")
 
-		templateRefObjs, err := decisionHandler.handleDecision(instance, decision)
+		templateRefObjs, err := decisionHandler.handleDecision(instance, decision, checkFullSpec)
 		if err == nil {
 			log.V(1).Info("Replicated the policy")
 		}
@@ -287,7 +304,7 @@ func (set decisionSet) namespaces() []string {
 
 // getPolicyPlacementDecisions retrieves the placement decisions for a input
 // placement binding when the policy is bound within it.
-func (r *PolicyReconciler) getPolicyPlacementDecisions(
+func (r *Propagator) getPolicyPlacementDecisions(
 	instance *policiesv1.Policy, pb *policiesv1.PlacementBinding,
 ) (decisions []appsv1.PlacementDecision, placements []*policiesv1.Placement, err error) {
 	if !common.HasValidPlacementRef(pb) {
@@ -388,7 +405,7 @@ func (r *PolicyReconciler) getPolicyPlacementDecisions(
 //   - remediationAction: If any placement binding that the cluster is bound to has
 //     bindingOverrides.remediationAction set to "enforce", the remediationAction
 //     for the replicated policy will be set to "enforce".
-func (r *PolicyReconciler) getAllClusterDecisions(
+func (r *Propagator) getAllClusterDecisions(
 	instance *policiesv1.Policy, pbList *policiesv1.PlacementBindingList,
 ) (
 	allClusterDecisions []clusterDecision, placements []*policiesv1.Placement, err error,
@@ -484,8 +501,8 @@ func (r *PolicyReconciler) getAllClusterDecisions(
 //   - allDecisions - a set of all the placement decisions encountered
 //   - failedClusters - a set of all the clusters that encountered an error during propagation
 //   - allFailed - a bool that determines if all clusters encountered an error during propagation
-func (r *PolicyReconciler) handleDecisions(
-	instance *policiesv1.Policy, pbList *policiesv1.PlacementBindingList,
+func (r *Propagator) handleDecisions(
+	instance *policiesv1.Policy, pbList *policiesv1.PlacementBindingList, checkFullSpec bool,
 ) (
 	placements []*policiesv1.Placement, allDecisions decisionSet, failedClusters decisionSet, allFailed bool,
 ) {
@@ -493,7 +510,11 @@ func (r *PolicyReconciler) handleDecisions(
 	allDecisions = map[appsv1.PlacementDecision]bool{}
 	failedClusters = map[appsv1.PlacementDecision]bool{}
 
-	allTemplateRefObjs := getPolicySetDependencies(instance)
+	allTemplateRefObjs := make(map[k8sdepwatches.ObjectIdentifier]bool)
+
+	if checkFullSpec {
+		allTemplateRefObjs = getPolicySetDependencies(instance)
+	}
 
 	allClusterDecisions, placements, err := r.getAllClusterDecisions(instance, pbList)
 	if err != nil {
@@ -512,7 +533,7 @@ func (r *PolicyReconciler) handleDecisions(
 		numWorkers := common.GetNumWorkers(len(allClusterDecisions), concurrencyPerPolicy)
 
 		for i := 0; i < numWorkers; i++ {
-			go handleDecisionWrapper(r, instance, decisionsChan, resultsChan)
+			go handleDecisionWrapper(r, instance, decisionsChan, resultsChan, checkFullSpec)
 		}
 
 		log.Info("Handling the placement decisions", "count", len(allClusterDecisions))
@@ -539,8 +560,10 @@ func (r *PolicyReconciler) handleDecisions(
 
 			processedResults++
 
-			for refObject := range result.TemplateRefObjs {
-				allTemplateRefObjs[refObject] = true
+			if checkFullSpec {
+				for refObject := range result.TemplateRefObjs {
+					allTemplateRefObjs[refObject] = true
+				}
 			}
 
 			// Once all the decisions have been processed, it's safe to close
@@ -553,49 +576,37 @@ func (r *PolicyReconciler) handleDecisions(
 		}
 	}
 
-	instanceGVK := instance.GroupVersionKind()
-	instanceObjID := k8sdepwatches.ObjectIdentifier{
-		Group:     instanceGVK.Group,
-		Version:   instanceGVK.Version,
-		Kind:      instanceGVK.Kind,
-		Namespace: instance.Namespace,
-		Name:      instance.Name,
-	}
-	refObjs := make([]k8sdepwatches.ObjectIdentifier, 0, len(allTemplateRefObjs))
-
-	for refObj := range allTemplateRefObjs {
-		refObjs = append(refObjs, refObj)
-	}
-
-	if len(refObjs) != 0 {
-		err := r.DynamicWatcher.AddOrUpdateWatcher(instanceObjID, refObjs...)
-		if err != nil {
-			log.Error(
-				err,
-				fmt.Sprintf(
-					"Failed to update the dynamic watches for the policy %s/%s on objects referenced by hub policy "+
-						"templates",
-					instance.Namespace,
-					instance.Name,
-				),
-			)
-
-			allFailed = true
+	if checkFullSpec {
+		instanceGVK := instance.GroupVersionKind()
+		instanceObjID := k8sdepwatches.ObjectIdentifier{
+			Group:     instanceGVK.Group,
+			Version:   instanceGVK.Version,
+			Kind:      instanceGVK.Kind,
+			Namespace: instance.Namespace,
+			Name:      instance.Name,
 		}
-	} else {
-		err := r.DynamicWatcher.RemoveWatcher(instanceObjID)
-		if err != nil {
-			log.Error(
-				err,
-				fmt.Sprintf(
-					"Failed to remove the dynamic watches for the policy %s/%s on objects referenced by hub policy "+
-						"templates",
-					instance.Namespace,
-					instance.Name,
-				),
-			)
+		refObjs := make([]k8sdepwatches.ObjectIdentifier, 0, len(allTemplateRefObjs))
 
-			allFailed = true
+		for refObj := range allTemplateRefObjs {
+			refObjs = append(refObjs, refObj)
+		}
+
+		if len(refObjs) != 0 {
+			if err := r.DynamicWatcher.AddOrUpdateWatcher(instanceObjID, refObjs...); err != nil {
+				log.Error(err, fmt.Sprintf(
+					"Failed to update the dynamic watches for the policy %s/%s on objects referenced by hub policy "+
+						"templates", instance.Namespace, instance.Name))
+
+				allFailed = true
+			}
+		} else {
+			if err := r.DynamicWatcher.RemoveWatcher(instanceObjID); err != nil {
+				log.Error(err, fmt.Sprintf(
+					"Failed to remove the dynamic watches for the policy %s/%s on objects referenced by hub policy "+
+						"templates", instance.Namespace, instance.Name))
+
+				allFailed = true
+			}
 		}
 	}
 
@@ -605,7 +616,7 @@ func (r *PolicyReconciler) handleDecisions(
 // cleanUpOrphanedRplPolicies compares the status of the input policy against the input placement
 // decisions. If the cluster exists in the status but doesn't exist in the input placement
 // decisions, then it's considered stale and will be removed.
-func (r *PolicyReconciler) cleanUpOrphanedRplPolicies(
+func (r *Propagator) cleanUpOrphanedRplPolicies(
 	instance *policiesv1.Policy, allDecisions decisionSet,
 ) error {
 	log := log.WithValues("policyName", instance.GetName(), "policyNamespace", instance.GetNamespace())
@@ -648,8 +659,8 @@ func (r *PolicyReconciler) cleanUpOrphanedRplPolicies(
 	return nil
 }
 
-// handleRootPolicy will properly replicate or clean up when a root policy is updated.
-func (r *PolicyReconciler) handleRootPolicy(instance *policiesv1.Policy) error {
+// HandleRootPolicy will properly replicate or clean up when a root policy is updated.
+func (r *Propagator) handleRootPolicy(instance *policiesv1.Policy, checkFullSpec bool) error {
 	// Generate a metric for elapsed handling time for each policy
 	entryTS := time.Now()
 	defer func() {
@@ -687,13 +698,14 @@ func (r *PolicyReconciler) handleRootPolicy(instance *policiesv1.Policy) error {
 		return err
 	}
 
-	placements, allDecisions, failedClusters, allFailed := r.handleDecisions(instance, pbList)
+	placements, allDecisions, failedClusters, allFailed := r.handleDecisions(instance, pbList, checkFullSpec)
 	if allFailed {
 		log.Info("Failed to get any placement decisions. Giving up on the request.")
 
 		return errors.New("could not get the placement decisions")
 	}
 
+	// jkulikau now here 2023-09-14
 	// Clean up before the status update in case the status update fails
 	err = r.cleanUpOrphanedRplPolicies(instance, allDecisions)
 	if err != nil {
@@ -737,8 +749,8 @@ func (r *PolicyReconciler) handleRootPolicy(instance *policiesv1.Policy) error {
 // handleDecision puts the policy on the cluster, creating it or updating it as required,
 // including resolving hub templates. It will return an error if an API call fails; no
 // internal states will result in errors (eg invalid templates don't cause errors here)
-func (r *PolicyReconciler) handleDecision(
-	rootPlc *policiesv1.Policy, clusterDec clusterDecision,
+func (r *Propagator) handleDecision(
+	rootPlc *policiesv1.Policy, clusterDec clusterDecision, checkFullSpec bool,
 ) (
 	map[k8sdepwatches.ObjectIdentifier]bool, error,
 ) {
@@ -761,7 +773,7 @@ func (r *PolicyReconciler) handleDecision(
 		if k8serrors.IsNotFound(err) {
 			replicatedPlc, err = r.buildReplicatedPolicy(rootPlc, clusterDec)
 			if err != nil {
-				return templateRefObjs, err
+				return nil, err
 			}
 
 			// do a quick check for any template delims in the policy before putting it through
@@ -794,13 +806,41 @@ func (r *PolicyReconciler) handleDecision(
 		// failed to get replicated object, requeue
 		log.Error(err, "Failed to get the replicated policy")
 
-		return templateRefObjs, err
+		return nil, err
+	}
+
+	if !checkFullSpec { // Only check that the remediationAction is correct
+		correctRemediationAction := policiesv1.Inform
+
+		shouldEnforce := rootPlc.Spec.RemediationAction == policiesv1.Enforce ||
+			strings.EqualFold(clusterDec.PolicyOverrides.RemediationAction, string(policiesv1.Enforce))
+
+		if shouldEnforce {
+			correctRemediationAction = policiesv1.Enforce
+		}
+
+		if replicatedPlc.Spec.RemediationAction != correctRemediationAction {
+			replicatedPlc.Spec.RemediationAction = correctRemediationAction
+
+			err = r.Update(context.TODO(), replicatedPlc)
+			if err != nil {
+				log.Error(err, "Failed to update the replicated policy")
+
+				return nil, err // jkulikau TODO: need to figure out how to deal with the template watches here...
+			}
+
+			r.Recorder.Event(rootPlc, "Normal", "PolicyPropagation",
+				fmt.Sprintf("Policy %s/%s was updated for cluster %s/%s", rootPlc.GetNamespace(),
+					rootPlc.GetName(), decision.ClusterNamespace, decision.ClusterName))
+		}
+
+		return nil, nil // jkulikau TODO: need to figure out how to deal with the template watches here...
 	}
 
 	// replicated policy already created, need to compare and patch
 	desiredReplicatedPolicy, err := r.buildReplicatedPolicy(rootPlc, clusterDec)
 	if err != nil {
-		return templateRefObjs, err
+		return nil, err
 	}
 
 	if policyHasTemplates(desiredReplicatedPolicy) {
@@ -859,7 +899,7 @@ func policyHasTemplates(instance *policiesv1.Policy) bool {
 // policy.open-cluster-management.io/trigger-update is used to trigger reprocessing of the templates
 // and ensure that replicated-policies in the cluster are updated only if there is a change. This
 // annotation is deleted from the replicated policies and not propagated to the cluster namespaces.
-func (r *PolicyReconciler) processTemplates(
+func (r *Propagator) processTemplates(
 	replicatedPlc *policiesv1.Policy, decision appsv1.PlacementDecision, rootPlc *policiesv1.Policy,
 ) (
 	map[k8sdepwatches.ObjectIdentifier]bool, error,
@@ -1099,7 +1139,7 @@ func isConfigurationPolicy(policyT *policiesv1.PolicyTemplate) bool {
 	return jsonDef != nil && jsonDef["kind"] == "ConfigurationPolicy"
 }
 
-func (r *PolicyReconciler) isPolicyInPolicySet(policyName, policySetName, namespace string) bool {
+func (r *Propagator) isPolicyInPolicySet(policyName, policySetName, namespace string) bool {
 	log := log.WithValues("policyName", policyName, "policySetName", policySetName, "policyNamespace", namespace)
 
 	policySet := policiesv1beta1.PolicySet{}

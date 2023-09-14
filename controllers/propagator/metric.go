@@ -24,7 +24,7 @@ var (
 	)
 	roothandlerMeasure = prometheus.NewHistogram(prometheus.HistogramOpts{
 		Name: "ocm_handle_root_policy_duration_seconds_bucket",
-		Help: "Time the handleRootPolicy function takes to complete.",
+		Help: "Time the HandleRootPolicy function takes to complete.",
 	})
 )
 
