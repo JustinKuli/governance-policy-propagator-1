@@ -136,6 +136,25 @@ func GetPoliciesInPlacementBinding(
 	return result
 }
 
+// GetPolicySetsInPlacementBinding returns a list of the PolicySets that are subjects of
+// the given PlacementBinding. The list items are not guaranteed to be unique.
+func GetPolicySetsInPlacementBinding(
+	_ context.Context, _ client.Client, pb *policiesv1.PlacementBinding,
+) []reconcile.Request {
+	result := make([]reconcile.Request, 0)
+
+	for _, subject := range pb.Subjects {
+		if subject.APIGroup != policiesv1.SchemeGroupVersion.Group && subject.Kind == policiesv1.PolicySetKind {
+			result = append(result, reconcile.Request{NamespacedName: types.NamespacedName{
+				Name:      subject.Name,
+				Namespace: pb.GetNamespace(),
+			}})
+		}
+	}
+
+	return result
+}
+
 // FindNonCompliantClustersForPolicy returns cluster in noncompliant status with given policy
 func FindNonCompliantClustersForPolicy(plc *policiesv1.Policy) []string {
 	clusterList := []string{}

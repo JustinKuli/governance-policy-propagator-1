@@ -322,12 +322,15 @@ func (r *PolicySetReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	}
 
 	policyMapper := func(ctx context.Context, object client.Object) []reconcile.Request {
+		//nolint:forcetypeassert
+		policy := object.(*policyv1.Policy)
+
 		log := log.WithValues("policyName", object.GetName(), "namespace", object.GetNamespace())
 		log.V(2).Info("Reconcile Request for Policy")
 
 		var result []reconcile.Request
 
-		for _, plcmt := range object.(*policyv1.Policy).Status.Placement {
+		for _, plcmt := range policy.Status.Placement {
 			// iterate through placement looking for policyset
 			if plcmt.PolicySet != "" {
 				log.V(2).Info("Found reconciliation request from a policy", "policySetName", plcmt.PolicySet)
@@ -344,48 +347,26 @@ func (r *PolicySetReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	}
 
 	policyPredicateFuncs := predicate.Funcs{
-		UpdateFunc: func(e event.UpdateEvent) bool {
-			//nolint:forcetypeassert
-			policyObjNew := e.ObjectNew.(*policyv1.Policy)
-			//nolint:forcetypeassert
-			policyObjOld := e.ObjectOld.(*policyv1.Policy)
-
-			return !equality.Semantic.DeepEqual(policyObjNew.Status, policyObjOld.Status)
-		},
 		CreateFunc: func(e event.CreateEvent) bool {
 			return true
 		},
 		DeleteFunc: func(e event.DeleteEvent) bool {
 			return true
 		},
+		UpdateFunc: func(e event.UpdateEvent) bool {
+			// If there was an update and the generation is the same, the status must have changed.
+			return e.ObjectOld.GetGeneration() == e.ObjectNew.GetGeneration()
+		},
 	}
 
 	placementBindingMapper := func(ctx context.Context, obj client.Object) []reconcile.Request {
 		//nolint:forcetypeassert
-		object := obj.(*policyv1.PlacementBinding)
-		var result []reconcile.Request
+		pb := obj.(*policyv1.PlacementBinding)
 
-		log := log.WithValues("placementBindingName", object.GetName(), "namespace", object.GetNamespace())
-
+		log := log.WithValues("placementBindingName", pb.GetName(), "namespace", pb.GetNamespace())
 		log.V(2).Info("Reconcile request for a PlacementBinding")
 
-		subjects := object.Subjects
-		for _, subject := range subjects {
-			if subject.APIGroup == policyv1.SchemeGroupVersion.Group {
-				if subject.Kind == policyv1.PolicySetKind {
-					log.V(2).Info("Found reconciliation request from policyset placement binding",
-						"policySetName", subject.Name)
-
-					request := reconcile.Request{NamespacedName: types.NamespacedName{
-						Name:      subject.Name,
-						Namespace: object.GetNamespace(),
-					}}
-					result = append(result, request)
-				}
-			}
-		}
-
-		return result
+		return common.GetPolicySetsInPlacementBinding(ctx, r.Client, pb)
 	}
 
 	pbPredicateFuncs := predicate.Funcs{
@@ -411,99 +392,6 @@ func (r *PolicySetReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		},
 	}
 
-	placementRuleMapper := func(ctx context.Context, object client.Object) []reconcile.Request {
-		log := log.WithValues("placementRuleName", object.GetName(), "namespace", object.GetNamespace())
-
-		log.V(2).Info("Reconcile Request for PlacementRule")
-
-		// list pb
-		pbList := &policyv1.PlacementBindingList{}
-
-		// find pb in the same namespace of placementrule
-		err := r.List(ctx, pbList, &client.ListOptions{Namespace: object.GetNamespace()})
-		if err != nil {
-			return nil
-		}
-
-		var result []reconcile.Request
-		// loop through pb to find if current placementrule is used for policy set
-		for _, pb := range pbList.Items {
-			// found matching placement rule in pb
-			if pb.PlacementRef.APIGroup == appsv1.SchemeGroupVersion.Group &&
-				pb.PlacementRef.Kind == "PlacementRule" && pb.PlacementRef.Name == object.GetName() {
-				// check if it is for policy set
-				subjects := pb.Subjects
-				for _, subject := range subjects {
-					if subject.APIGroup == policyv1.SchemeGroupVersion.Group {
-						if subject.Kind == policyv1.PolicySetKind {
-							log.V(2).Info("Found reconciliation request from policyset placement rule",
-								"policySetName", subject.Name)
-
-							request := reconcile.Request{NamespacedName: types.NamespacedName{
-								Name:      subject.Name,
-								Namespace: object.GetNamespace(),
-							}}
-							result = append(result, request)
-						}
-					}
-				}
-			}
-		}
-
-		return result
-	}
-
-	placementDecisionMapper := func(ctx context.Context, object client.Object) []reconcile.Request {
-		log := log.WithValues("placementDecisionName", object.GetName(), "namespace", object.GetNamespace())
-
-		log.V(2).Info("Reconcile request for a placement decision")
-
-		// get the placement name from the placementdecision
-		placementName := object.GetLabels()["cluster.open-cluster-management.io/placement"]
-		if placementName == "" {
-			return nil
-		}
-
-		pbList := &policyv1.PlacementBindingList{}
-		// find pb in the same namespace of placementrule
-		lopts := &client.ListOptions{Namespace: object.GetNamespace()}
-		opts := client.MatchingFields{"placementRef.name": placementName}
-		opts.ApplyToList(lopts)
-
-		err := r.List(ctx, pbList, lopts)
-		if err != nil {
-			return nil
-		}
-
-		var result []reconcile.Request
-		// loop through pb to find if current placement is used for policy set
-		for _, pb := range pbList.Items {
-			if pb.PlacementRef.APIGroup != clusterv1beta1.SchemeGroupVersion.Group ||
-				pb.PlacementRef.Kind != "Placement" || pb.PlacementRef.Name != placementName {
-				continue
-			}
-
-			// found matching placement in pb -- check if it is for policyset
-			subjects := pb.Subjects
-			for _, subject := range subjects {
-				if subject.APIGroup == policyv1.SchemeGroupVersion.Group {
-					if subject.Kind == policyv1.PolicySetKind {
-						log.V(2).Info("Found reconciliation request from policyset placement decision",
-							"policySetName", subject.Name)
-
-						request := reconcile.Request{NamespacedName: types.NamespacedName{
-							Name:      subject.Name,
-							Namespace: object.GetNamespace(),
-						}}
-						result = append(result, request)
-					}
-				}
-			}
-		}
-
-		return result
-	}
-
 	return ctrl.NewControllerManagedBy(mgr).
 		Named(ControllerName).
 		For(
@@ -519,10 +407,12 @@ func (r *PolicySetReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			builder.WithPredicates(pbPredicateFuncs)).
 		Watches(
 			&appsv1.PlacementRule{},
-			handler.EnqueueRequestsFromMapFunc(placementRuleMapper)).
+			handler.EnqueueRequestsFromMapFunc(common.PlacementRuleMapper(
+				mgr.GetClient(), common.GetPolicySetsInPlacementBinding))).
 		Watches(
 			&clusterv1beta1.PlacementDecision{},
-			handler.EnqueueRequestsFromMapFunc(placementDecisionMapper)).
+			handler.EnqueueRequestsFromMapFunc(common.PlacementDecisionMapper(
+				mgr.GetClient(), common.GetPolicySetsInPlacementBinding))).
 		Complete(r)
 }
 

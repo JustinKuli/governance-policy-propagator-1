@@ -35,18 +35,17 @@ var log = ctrl.Log.WithName(ControllerName)
 func (r *RootPolicyStatusReconciler) SetupWithManager(mgr ctrl.Manager, _ ...source.Source) error {
 	policyStatusPredicate := predicate.Funcs{
 		// Creations are handled by the main policy controller.
-		CreateFunc: func(e event.CreateEvent) bool { return false },
-		UpdateFunc: func(e event.UpdateEvent) bool {
-			//nolint:forcetypeassert
-			oldPolicy := e.ObjectOld.(*policiesv1.Policy)
-			//nolint:forcetypeassert
-			updatedPolicy := e.ObjectNew.(*policiesv1.Policy)
-
-			// If there was an update and the generation is the same, the status must have changed.
-			return oldPolicy.Generation == updatedPolicy.Generation
+		CreateFunc: func(e event.CreateEvent) bool {
+			return false
 		},
 		// Deletions are handled by the main policy controller.
-		DeleteFunc: func(e event.DeleteEvent) bool { return false },
+		DeleteFunc: func(e event.DeleteEvent) bool {
+			return false
+		},
+		UpdateFunc: func(e event.UpdateEvent) bool {
+			// If there was an update and the generation is the same, the status must have changed.
+			return e.ObjectOld.GetGeneration() == e.ObjectNew.GetGeneration()
+		},
 	}
 
 	return ctrl.NewControllerManagedBy(mgr).
