@@ -13,7 +13,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
+	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	"sigs.k8s.io/controller-runtime/pkg/source"
 
@@ -31,6 +33,22 @@ var log = ctrl.Log.WithName(ControllerName)
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *RootPolicyStatusReconciler) SetupWithManager(mgr ctrl.Manager, _ ...source.Source) error {
+	policyStatusPredicate := predicate.Funcs{
+		// Creations are handled by the main policy controller.
+		CreateFunc: func(e event.CreateEvent) bool { return false },
+		UpdateFunc: func(e event.UpdateEvent) bool {
+			//nolint:forcetypeassert
+			oldPolicy := e.ObjectOld.(*policiesv1.Policy)
+			//nolint:forcetypeassert
+			updatedPolicy := e.ObjectNew.(*policiesv1.Policy)
+
+			// If there was an update and the generation is the same, the status must have changed.
+			return oldPolicy.Generation == updatedPolicy.Generation
+		},
+		// Deletions are handled by the main policy controller.
+		DeleteFunc: func(e event.DeleteEvent) bool { return false },
+	}
+
 	return ctrl.NewControllerManagedBy(mgr).
 		WithOptions(controller.Options{MaxConcurrentReconciles: int(r.MaxConcurrentReconciles)}).
 		Named(ControllerName).
@@ -44,7 +62,7 @@ func (r *RootPolicyStatusReconciler) SetupWithManager(mgr ctrl.Manager, _ ...sou
 		Watches(
 			&policiesv1.Policy{},
 			handler.EnqueueRequestsFromMapFunc(common.PolicyMapper(mgr.GetClient())),
-			builder.WithPredicates(policyStatusPredicate()),
+			builder.WithPredicates(policyStatusPredicate),
 		).
 		Complete(r)
 }
