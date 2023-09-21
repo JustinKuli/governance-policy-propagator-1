@@ -1,6 +1,7 @@
+// Copyright (c) 2023 Red Hat, Inc.
 // Copyright Contributors to the Open Cluster Management project
 
-package policystatus
+package propagator
 
 import (
 	"context"
@@ -21,12 +22,7 @@ import (
 
 	policiesv1 "open-cluster-management.io/governance-policy-propagator/api/v1"
 	"open-cluster-management.io/governance-policy-propagator/controllers/common"
-	"open-cluster-management.io/governance-policy-propagator/controllers/propagator"
 )
-
-const ControllerName string = "root-policy-status"
-
-var log = ctrl.Log.WithName(ControllerName)
 
 //+kubebuilder:rbac:groups=policy.open-cluster-management.io,resources=policies,verbs=get;list;watch
 //+kubebuilder:rbac:groups=policy.open-cluster-management.io,resources=policies/status,verbs=get;update;patch
@@ -50,7 +46,7 @@ func (r *RootPolicyStatusReconciler) SetupWithManager(mgr ctrl.Manager, _ ...sou
 
 	return ctrl.NewControllerManagedBy(mgr).
 		WithOptions(controller.Options{MaxConcurrentReconciles: int(r.MaxConcurrentReconciles)}).
-		Named(ControllerName).
+		Named("root-policy-status").
 		For(
 			&policiesv1.Policy{},
 			builder.WithPredicates(common.NeverEnqueue),
@@ -112,7 +108,7 @@ func (r *RootPolicyStatusReconciler) Reconcile(ctx context.Context, request ctrl
 
 	replicatedPolicyList := &policiesv1.PolicyList{}
 
-	err = r.List(context.TODO(), replicatedPolicyList, client.MatchingLabels(common.LabelsForRootPolicy(rootPolicy)))
+	err = r.List(ctx, replicatedPolicyList, client.MatchingLabels(common.LabelsForRootPolicy(rootPolicy)))
 	if err != nil {
 		log.Error(err, "Failed to list the replicated policies")
 
@@ -151,9 +147,9 @@ func (r *RootPolicyStatusReconciler) Reconcile(ctx context.Context, request ctrl
 		return reconcile.Result{}, nil
 	}
 
-	rootPolicy.Status.ComplianceState = propagator.CalculateRootCompliance(rootPolicy.Status.Status)
+	rootPolicy.Status.ComplianceState = CalculateRootCompliance(rootPolicy.Status.Status)
 
-	err = r.Status().Update(context.TODO(), rootPolicy)
+	err = r.Status().Update(ctx, rootPolicy)
 	if err != nil {
 		log.Error(err, "Failed to update the root policy status. Will Requeue.")
 

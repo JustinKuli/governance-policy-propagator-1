@@ -43,7 +43,6 @@ import (
 	metricsctrl "open-cluster-management.io/governance-policy-propagator/controllers/policymetrics"
 	policysetctrl "open-cluster-management.io/governance-policy-propagator/controllers/policyset"
 	propagatorctrl "open-cluster-management.io/governance-policy-propagator/controllers/propagator"
-	rootpolicystatusctrl "open-cluster-management.io/governance-policy-propagator/controllers/rootpolicystatus"
 	"open-cluster-management.io/governance-policy-propagator/version"
 )
 
@@ -298,13 +297,13 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err = (&rootpolicystatusctrl.RootPolicyStatusReconciler{
+	if err = (&propagatorctrl.RootPolicyStatusReconciler{
 		Client:                  mgr.GetClient(),
 		MaxConcurrentReconciles: policyStatusMaxConcurrency,
 		RootPolicyLocks:         policiesLock,
 		Scheme:                  mgr.GetScheme(),
 	}).SetupWithManager(mgr); err != nil {
-		log.Error(err, "Unable to create controller", "controller", rootpolicystatusctrl.ControllerName)
+		log.Error(err, "Unable to create controller", "controller", "root-policy-status")
 		os.Exit(1)
 	}
 
