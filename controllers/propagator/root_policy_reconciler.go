@@ -11,8 +11,6 @@ import (
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
-	clusterv1beta1 "open-cluster-management.io/api/cluster/v1beta1"
-	appsv1 "open-cluster-management.io/multicloud-operators-subscription/pkg/apis/apps/placementrule/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -20,7 +18,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
-	"sigs.k8s.io/controller-runtime/pkg/source"
 
 	policiesv1 "open-cluster-management.io/governance-policy-propagator/api/v1"
 	policiesv1beta1 "open-cluster-management.io/governance-policy-propagator/api/v1beta1"
@@ -30,15 +27,52 @@ import (
 //+kubebuilder:rbac:groups=policy.open-cluster-management.io,resources=policies,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=policy.open-cluster-management.io,resources=policies/status,verbs=get;update;patch
 //+kubebuilder:rbac:groups=policy.open-cluster-management.io,resources=policies/finalizers,verbs=update
-//+kubebuilder:rbac:groups=policy.open-cluster-management.io,resources=placementbindings,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=policy.open-cluster-management.io,resources=policysets,verbs=get;list;watch
 //+kubebuilder:rbac:groups=cluster.open-cluster-management.io,resources=managedclusters;placementdecisions;placements,verbs=get;list;watch
-//+kubebuilder:rbac:groups=apps.open-cluster-management.io,resources=placementrules,verbs=get;list;watch
 //+kubebuilder:rbac:groups=core,resources=events,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=*,resources=*,verbs=get;list;watch
 
 // SetupWithManager sets up the controller with the Manager.
-func (r *RootPolicyReconciler) SetupWithManager(mgr ctrl.Manager, additionalSources ...source.Source) error {
+func (r *RootPolicyReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	// only consider updates to *root* policies, which are not pure status updates.
+	policyPredicates := predicate.Funcs{
+		CreateFunc: func(e event.CreateEvent) bool {
+			replicated, err := common.IsReplicatedPolicy(r.Client, e.Object)
+			if replicated && err == nil {
+				// If there was an error, better to consider it for a reconcile.
+				return false
+			}
+
+			return true
+		},
+		DeleteFunc: func(e event.DeleteEvent) bool {
+			replicated, err := common.IsReplicatedPolicy(r.Client, e.Object)
+			if replicated && err == nil {
+				// If there was an error, better to consider it for a reconcile.
+				return false
+			}
+
+			return true
+		},
+		UpdateFunc: func(e event.UpdateEvent) bool {
+			replicated, err := common.IsReplicatedPolicy(r.Client, e.ObjectNew)
+			if replicated && err == nil {
+				// If there was an error, better consider it for a reconcile.
+				return false
+			}
+
+			//nolint:forcetypeassert
+			oldPolicy := e.ObjectOld.(*policiesv1.Policy)
+			//nolint:forcetypeassert
+			updatedPolicy := e.ObjectNew.(*policiesv1.Policy)
+
+			// Ignore pure status updates since those are handled by a separate controller
+			return oldPolicy.Generation != updatedPolicy.Generation ||
+				!equality.Semantic.DeepEqual(oldPolicy.ObjectMeta.Labels, updatedPolicy.ObjectMeta.Labels) ||
+				!equality.Semantic.DeepEqual(oldPolicy.ObjectMeta.Annotations, updatedPolicy.ObjectMeta.Annotations)
+		},
+	}
+
 	policySetMapper := func(ctx context.Context, object client.Object) []reconcile.Request {
 		//nolint:forcetypeassert
 		policySet := object.(*policiesv1beta1.PolicySet)
@@ -113,21 +147,11 @@ func (r *RootPolicyReconciler) SetupWithManager(mgr ctrl.Manager, additionalSour
 		},
 	}
 
-	builder := ctrl.NewControllerManagedBy(mgr).
-		Named(ControllerName).
+	return ctrl.NewControllerManagedBy(mgr).
+		Named("root-policy-reconciler").
 		For(
 			&policiesv1.Policy{},
-			builder.WithPredicates(common.NeverEnqueue)).
-		// This is a workaround - the controller-runtime requires a "For", but does not allow it to
-		// modify the eventhandler. Currently we need to enqueue requests for Policies in a very
-		// particular way, so we will define that in a separate "Watches"
-		Watches(
-			&policiesv1.Policy{},
-			handler.EnqueueRequestsFromMapFunc(common.PolicyMapper(mgr.GetClient())),
-			builder.WithPredicates(predicate.Or(
-				predicate.GenerationChangedPredicate{},
-				predicate.LabelChangedPredicate{},
-				predicate.AnnotationChangedPredicate{}))).
+			builder.WithPredicates(policyPredicates)).
 		Watches(
 			&policiesv1beta1.PolicySet{},
 			handler.EnqueueRequestsFromMapFunc(policySetMapper),
@@ -136,20 +160,7 @@ func (r *RootPolicyReconciler) SetupWithManager(mgr ctrl.Manager, additionalSour
 			&policiesv1.PlacementBinding{},
 			handler.EnqueueRequestsFromMapFunc(placementBindingMapper),
 			builder.WithPredicates(pbPredicateFuncs)).
-		Watches(
-			&appsv1.PlacementRule{},
-			handler.EnqueueRequestsFromMapFunc(common.PlacementRuleMapper(
-				mgr.GetClient(), common.GetPoliciesInPlacementBinding))).
-		Watches(
-			&clusterv1beta1.PlacementDecision{},
-			handler.EnqueueRequestsFromMapFunc(common.PlacementDecisionMapper(
-				mgr.GetClient(), common.GetPoliciesInPlacementBinding)))
-
-	for _, source := range additionalSources {
-		builder.WatchesRawSource(source, &handler.EnqueueRequestForObject{})
-	}
-
-	return builder.Complete(r)
+		Complete(r)
 }
 
 // blank assignment to verify that ReconcilePolicy implements reconcile.Reconciler
@@ -190,25 +201,14 @@ func (r *RootPolicyReconciler) Reconcile(ctx context.Context, request ctrl.Reque
 	err := r.Get(ctx, request.NamespacedName, instance)
 	if err != nil {
 		if k8serrors.IsNotFound(err) {
-			// Request object not found, could have been deleted after reconcile request.
-			// Owned objects are automatically garbage collected.
-			log.Info("Policy not found, so it may have been deleted. Deleting the replicated policies.")
-
-			err := r.cleanUpPolicy(&policiesv1.Policy{
-				TypeMeta: metav1.TypeMeta{
-					Kind:       policiesv1.Kind,
-					APIVersion: policiesv1.GroupVersion.Group + "/" + policiesv1.GroupVersion.Version,
-				},
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      request.Name,
-					Namespace: request.Namespace,
-				},
-			})
+			count, err := r.updateExistingReplicas(ctx, request.Namespace+"."+request.Name)
 			if err != nil {
-				log.Error(err, "Failure during replicated policy cleanup")
+				log.Error(err, "Failed to send update events to replicated policies, requeueing")
 
 				return reconcile.Result{}, err
 			}
+
+			log.Info("Replicated policies sent for deletion", "count", count)
 
 			return reconcile.Result{}, nil
 		}
@@ -249,4 +249,42 @@ func (r *RootPolicyReconciler) Reconcile(ctx context.Context, request ctrl.Reque
 	}
 
 	return reconcile.Result{}, nil
+}
+
+//+kubebuilder:object:root=true
+
+type GuttedObject struct {
+	metav1.TypeMeta   `json:",inline"`
+	metav1.ObjectMeta `json:"metadata,omitempty"`
+}
+
+func (r *Propagator) updateExistingReplicas(ctx context.Context, rootPolicyFullName string) (int, error) {
+	// Get all the replicated policies for this root policy
+	policyList := &policiesv1.PolicyList{}
+	opts := &client.ListOptions{}
+
+	matcher := client.MatchingLabels{common.RootPolicyLabel: rootPolicyFullName}
+	matcher.ApplyToList(opts)
+
+	err := r.List(ctx, policyList, opts)
+	if err != nil && !k8serrors.IsNotFound(err) {
+		return 0, err
+	}
+
+	for _, replicated := range policyList.Items {
+		simpleObj := &GuttedObject{
+			TypeMeta: metav1.TypeMeta{
+				Kind:       replicated.Kind,
+				APIVersion: replicated.APIVersion,
+			},
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      replicated.Name,
+				Namespace: replicated.Namespace,
+			},
+		}
+
+		r.ReplicatedPolicyUpdates <- event.GenericEvent{Object: simpleObj}
+	}
+
+	return len(policyList.Items), nil
 }

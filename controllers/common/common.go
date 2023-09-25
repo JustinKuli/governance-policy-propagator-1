@@ -96,11 +96,12 @@ func IsPbForPolicySet(pb *policiesv1.PlacementBinding) bool {
 
 // GetPoliciesInPlacementBinding returns a list of the Policies that are either direct subjects of
 // the given PlacementBinding, or are in PolicySets that are subjects of the PlacementBinding.
-// The list items are not guaranteed to be unique (for example if a policy is in multiple sets).
+// The list items are guaranteed to be unique (even if a policy is in multiple sets).
 func GetPoliciesInPlacementBinding(
 	ctx context.Context, c client.Client, pb *policiesv1.PlacementBinding,
 ) []reconcile.Request {
 	result := make([]reconcile.Request, 0)
+	seenPolicies := make(map[string]struct{})
 
 	for _, subject := range pb.Subjects {
 		if subject.APIGroup != policiesv1.SchemeGroupVersion.Group {
@@ -109,10 +110,14 @@ func GetPoliciesInPlacementBinding(
 
 		switch subject.Kind {
 		case policiesv1.Kind:
-			result = append(result, reconcile.Request{NamespacedName: types.NamespacedName{
-				Name:      subject.Name,
-				Namespace: pb.GetNamespace(),
-			}})
+			if _, alreadySeen := seenPolicies[subject.Name]; !alreadySeen {
+				seenPolicies[subject.Name] = struct{}{}
+
+				result = append(result, reconcile.Request{NamespacedName: types.NamespacedName{
+					Name:      subject.Name,
+					Namespace: pb.GetNamespace(),
+				}})
+			}
 		case policiesv1.PolicySetKind:
 			setNN := types.NamespacedName{
 				Name:      subject.Name,
@@ -125,10 +130,14 @@ func GetPoliciesInPlacementBinding(
 			}
 
 			for _, plc := range policySet.Spec.Policies {
-				result = append(result, reconcile.Request{NamespacedName: types.NamespacedName{
-					Name:      string(plc),
-					Namespace: pb.GetNamespace(),
-				}})
+				if _, alreadySeen := seenPolicies[subject.Name]; !alreadySeen {
+					seenPolicies[subject.Name] = struct{}{}
+
+					result = append(result, reconcile.Request{NamespacedName: types.NamespacedName{
+						Name:      string(plc),
+						Namespace: pb.GetNamespace(),
+					}})
+				}
 			}
 		}
 	}
@@ -137,14 +146,21 @@ func GetPoliciesInPlacementBinding(
 }
 
 // GetPolicySetsInPlacementBinding returns a list of the PolicySets that are subjects of
-// the given PlacementBinding. The list items are not guaranteed to be unique.
+// the given PlacementBinding. The list items are guaranteed to be unique.
 func GetPolicySetsInPlacementBinding(
 	_ context.Context, _ client.Client, pb *policiesv1.PlacementBinding,
 ) []reconcile.Request {
 	result := make([]reconcile.Request, 0)
+	seenSets := make(map[string]struct{})
 
 	for _, subject := range pb.Subjects {
-		if subject.APIGroup != policiesv1.SchemeGroupVersion.Group && subject.Kind == policiesv1.PolicySetKind {
+		if subject.APIGroup != policiesv1.SchemeGroupVersion.Group || subject.Kind != policiesv1.PolicySetKind {
+			continue
+		}
+
+		if _, alreadySeen := seenSets[subject.Name]; !alreadySeen {
+			seenSets[subject.Name] = struct{}{}
+
 			result = append(result, reconcile.Request{NamespacedName: types.NamespacedName{
 				Name:      subject.Name,
 				Namespace: pb.GetNamespace(),

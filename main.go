@@ -33,7 +33,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/config"
+	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
+	"sigs.k8s.io/controller-runtime/pkg/source"
 
 	//+kubebuilder:scaffold:imports
 	policyv1 "open-cluster-management.io/governance-policy-propagator/api/v1"
@@ -242,18 +244,34 @@ func main() {
 
 	policiesLock := &sync.Map{}
 
+	bufferSize := 1024
+
+	replicatedPolicyUpdates := make(chan event.GenericEvent, bufferSize)
+	replicatedUpdatesSource := &source.Channel{
+		Source:         replicatedPolicyUpdates,
+		DestBufferSize: bufferSize,
+	}
+
 	propagator := propagatorctrl.Propagator{
-		Client:          mgr.GetClient(),
-		Scheme:          mgr.GetScheme(),
-		Recorder:        mgr.GetEventRecorderFor(propagatorctrl.ControllerName),
-		DynamicWatcher:  dynamicWatcher,
-		RootPolicyLocks: policiesLock,
+		Client:                  mgr.GetClient(),
+		Scheme:                  mgr.GetScheme(),
+		Recorder:                mgr.GetEventRecorderFor(propagatorctrl.ControllerName),
+		DynamicWatcher:          dynamicWatcher,
+		RootPolicyLocks:         policiesLock,
+		ReplicatedPolicyUpdates: replicatedPolicyUpdates,
 	}
 
 	if err = (&propagatorctrl.RootPolicyReconciler{
 		Propagator: propagator,
-	}).SetupWithManager(mgr, dynamicWatcherSource); err != nil {
+	}).SetupWithManager(mgr); err != nil {
 		log.Error(err, "Unable to create the controller", "controller", "root-policy-reconciler")
+		os.Exit(1)
+	}
+
+	if err = (&propagatorctrl.ReplicatedPolicyReconciler{
+		Propagator: propagator,
+	}).SetupWithManager(mgr, dynamicWatcherSource, replicatedUpdatesSource); err != nil {
+		log.Error(err, "Unable to create the controller", "controller", "replicated-policy-reconciler")
 		os.Exit(1)
 	}
 
@@ -298,10 +316,8 @@ func main() {
 	}
 
 	if err = (&propagatorctrl.RootPolicyStatusReconciler{
-		Client:                  mgr.GetClient(),
+		Propagator:              propagator,
 		MaxConcurrentReconciles: policyStatusMaxConcurrency,
-		RootPolicyLocks:         policiesLock,
-		Scheme:                  mgr.GetScheme(),
 	}).SetupWithManager(mgr); err != nil {
 		log.Error(err, "Unable to create controller", "controller", "root-policy-status")
 		os.Exit(1)

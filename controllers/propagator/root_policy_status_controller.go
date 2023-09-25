@@ -5,11 +5,11 @@ package propagator
 
 import (
 	"context"
+	"sort"
 	"sync"
 
+	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -30,13 +30,11 @@ import (
 // SetupWithManager sets up the controller with the Manager.
 func (r *RootPolicyStatusReconciler) SetupWithManager(mgr ctrl.Manager, _ ...source.Source) error {
 	policyStatusPredicate := predicate.Funcs{
-		// Creations are handled by the main policy controller.
 		CreateFunc: func(e event.CreateEvent) bool {
-			return false
+			return true
 		},
-		// Deletions are handled by the main policy controller.
 		DeleteFunc: func(e event.DeleteEvent) bool {
-			return false
+			return true
 		},
 		UpdateFunc: func(e event.UpdateEvent) bool {
 			// If there was an update and the generation is the same, the status must have changed.
@@ -49,16 +47,15 @@ func (r *RootPolicyStatusReconciler) SetupWithManager(mgr ctrl.Manager, _ ...sou
 		Named("root-policy-status").
 		For(
 			&policiesv1.Policy{},
-			builder.WithPredicates(common.NeverEnqueue),
-		).
+			builder.WithPredicates(common.NeverEnqueue)).
 		// This is a workaround - the controller-runtime requires a "For", but does not allow it to
 		// modify the eventhandler. Currently we need to enqueue requests for Policies in a very
 		// particular way, so we will define that in a separate "Watches"
 		Watches(
 			&policiesv1.Policy{},
 			handler.EnqueueRequestsFromMapFunc(common.PolicyMapper(mgr.GetClient())),
-			builder.WithPredicates(policyStatusPredicate),
-		).
+			builder.WithPredicates(policyStatusPredicate)).
+		// TODO: Watch Placements and Bindings
 		Complete(r)
 }
 
@@ -67,11 +64,8 @@ var _ reconcile.Reconciler = &RootPolicyStatusReconciler{}
 
 // RootPolicyStatusReconciler handles replicated policy status updates and updates the root policy status.
 type RootPolicyStatusReconciler struct {
-	client.Client
+	Propagator
 	MaxConcurrentReconciles uint
-	// Use a shared lock with the main policy controller to avoid conflicting updates.
-	RootPolicyLocks *sync.Map
-	Scheme          *runtime.Scheme
 }
 
 // Reconcile will update the root policy status based on the current state whenever a root or replicated policy status
@@ -89,9 +83,17 @@ func (r *RootPolicyStatusReconciler) Reconcile(ctx context.Context, request ctrl
 	lock.(*sync.Mutex).Lock()
 	defer lock.(*sync.Mutex).Unlock()
 
+	// Set the hub template watch metric after reconcile
+	defer func() {
+		hubTempWatches := r.DynamicWatcher.GetWatchCount()
+		log.V(3).Info("Setting hub template watch metric", "value", hubTempWatches)
+
+		hubTemplateActiveWatchesMetric.Set(float64(hubTempWatches))
+	}()
+
 	rootPolicy := &policiesv1.Policy{}
 
-	err := r.Get(ctx, types.NamespacedName{Namespace: request.Namespace, Name: request.Name}, rootPolicy)
+	err := r.Get(ctx, request.NamespacedName, rootPolicy)
 	if err != nil {
 		if errors.IsNotFound(err) {
 			log.V(2).Info("The root policy has been deleted. Doing nothing.")
@@ -115,39 +117,50 @@ func (r *RootPolicyStatusReconciler) Reconcile(ctx context.Context, request ctrl
 		return reconcile.Result{}, err
 	}
 
-	clusterToReplicatedPolicy := make(map[string]*policiesv1.Policy, len(replicatedPolicyList.Items))
+	pbList := &policiesv1.PlacementBindingList{}
 
-	for i := range replicatedPolicyList.Items {
-		// Use the index to avoid making copies of each replicated policy
-		clusterToReplicatedPolicy[replicatedPolicyList.Items[i].Namespace] = &replicatedPolicyList.Items[i]
+	err = r.List(ctx, pbList, &client.ListOptions{Namespace: request.Namespace})
+	if err != nil {
+		log.Error(err, "Could not list the placement bindings")
+
+		return reconcile.Result{}, err
 	}
 
-	updatedStatus := false
+	_, placements, err := r.getAllClusterDecisions(rootPolicy, pbList)
+	if err != nil {
+		log.Error(err, "Failed to calculate the placements")
 
-	err = r.Get(ctx, types.NamespacedName{Namespace: request.Namespace, Name: request.Name}, rootPolicy)
+		return reconcile.Result{}, err
+	}
+
+	cpcs := make([]*policiesv1.CompliancePerClusterStatus, len(replicatedPolicyList.Items))
+
+	for i := range replicatedPolicyList.Items {
+		cpcs[i] = &policiesv1.CompliancePerClusterStatus{
+			ComplianceState:  replicatedPolicyList.Items[i].Status.ComplianceState,
+			ClusterName:      replicatedPolicyList.Items[i].Namespace,
+			ClusterNamespace: replicatedPolicyList.Items[i].Namespace,
+		}
+	}
+
+	sort.Slice(cpcs, func(i, j int) bool {
+		return cpcs[i].ClusterName < cpcs[j].ClusterName
+	})
+
+	err = r.Get(ctx, request.NamespacedName, rootPolicy)
 	if err != nil {
 		log.Error(err, "Failed to refresh the cached policy. Will use existing policy.")
 	}
 
-	for _, status := range rootPolicy.Status.Status {
-		replicatedPolicy := clusterToReplicatedPolicy[status.ClusterNamespace]
-		if replicatedPolicy == nil {
-			continue
-		}
-
-		if status.ComplianceState != replicatedPolicy.Status.ComplianceState {
-			updatedStatus = true
-			status.ComplianceState = replicatedPolicy.Status.ComplianceState
-		}
-	}
-
-	if !updatedStatus {
+	if equality.Semantic.DeepEqual(rootPolicy.Status.Status, cpcs) {
 		log.V(1).Info("No status changes required in the root policy. Doing nothing.")
 
 		return reconcile.Result{}, nil
 	}
 
-	rootPolicy.Status.ComplianceState = CalculateRootCompliance(rootPolicy.Status.Status)
+	rootPolicy.Status.Placement = placements
+	rootPolicy.Status.Status = cpcs
+	rootPolicy.Status.ComplianceState = CalculateRootCompliance(cpcs)
 
 	err = r.Status().Update(ctx, rootPolicy)
 	if err != nil {

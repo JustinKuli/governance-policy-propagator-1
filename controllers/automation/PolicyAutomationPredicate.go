@@ -3,7 +3,6 @@
 package automation
 
 import (
-	"k8s.io/apimachinery/pkg/api/equality"
 	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
@@ -15,8 +14,6 @@ var policyAuomtationPredicateFuncs = predicate.Funcs{
 	UpdateFunc: func(e event.UpdateEvent) bool {
 		//nolint:forcetypeassert
 		policyAutomationNew := e.ObjectNew.(*policyv1beta1.PolicyAutomation)
-		//nolint:forcetypeassert
-		policyAutomationOld := e.ObjectOld.(*policyv1beta1.PolicyAutomation)
 
 		if policyAutomationNew.Spec.PolicyRef == "" {
 			return false
@@ -26,7 +23,8 @@ var policyAuomtationPredicateFuncs = predicate.Funcs{
 			return true
 		}
 
-		return !equality.Semantic.DeepEqual(policyAutomationNew.Spec, policyAutomationOld.Spec)
+		// the generation is incremented whenever the spec changes.
+		return e.ObjectNew.GetGeneration() != e.ObjectOld.GetGeneration()
 	},
 	CreateFunc: func(e event.CreateEvent) bool {
 		//nolint:forcetypeassert

@@ -554,7 +554,18 @@ func TestGetAllClusterDecisions(t *testing.T) {
 				t.Fatal("Got unexpected error", err.Error())
 			}
 
-			assert.ElementsMatch(t, actualAllClusterDecisions, test.expectedClusterDecisions)
+			actualDecisions := make([]clusterDecision, 0)
+
+			// Covert the decision map to a slice of clusterDecision
+			for cluster, overrides := range actualAllClusterDecisions {
+				decision := clusterDecision{
+					Cluster:         cluster,
+					PolicyOverrides: overrides,
+				}
+				actualDecisions = append(actualDecisions, decision)
+			}
+
+			assert.ElementsMatch(t, actualDecisions, test.expectedClusterDecisions)
 			assert.ElementsMatch(t, actualPlacements, test.expectedPlacements)
 		})
 	}
