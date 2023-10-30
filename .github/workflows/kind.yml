@@ -60,7 +60,7 @@ jobs:
       uses: actions/upload-artifact@v3
       with:
         name: coverage_unit
-        path: coverage_unit.out
+        path: governance-policy-propagator/coverage_unit.out
 
   kind-tests:
     runs-on: ubuntu-latest
@@ -99,7 +99,7 @@ jobs:
       uses: actions/upload-artifact@v3
       with:
         name: coverage_e2e
-        path: coverage_e2e.out
+        path: governance-policy-propagator/coverage_e2e.out
 
     - name: E2E Tests for Compliance Events API
       run: |
@@ -111,7 +111,7 @@ jobs:
       uses: actions/upload-artifact@v3
       with:
         name: coverage_e2e_compliance_events_api
-        path: coverage_e2e_compliance_events_api.out
+        path: governance-policy-propagator/coverage_e2e_compliance_events_api.out
 
     - name: Verify Deployment Configuration
       run: |
@@ -170,7 +170,7 @@ jobs:
       uses: actions/upload-artifact@v3
       with:
         name: coverage_e2e_policyautomation
-        path: coverage_e2e_policyautomation.out
+        path: governance-policy-propagator/coverage_e2e_policyautomation.out
 
     - name: Debug
       if: ${{ failure() }}
