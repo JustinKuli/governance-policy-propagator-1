@@ -192,6 +192,9 @@ jobs:
     needs: [unit-tests, kind-tests, policyautomation-tests]
 
     steps:
+    - name: Checkout Governance Policy Propagator
+      uses: actions/checkout@v3
+
     - name: Download Unit Coverage Result
       uses: actions/download-artifact@v3
       with:
