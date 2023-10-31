@@ -183,10 +183,14 @@ jobs:
         make kind-delete-cluster
 
   coveage-verification:
+    defaults:
+      run:
+        working-directory: '.'
     runs-on: ubuntu-latest
     name: Test Coverage Verification
     if: ${{ github.event_name == 'pull_request' }}
     needs: [unit-tests, kind-tests, policyautomation-tests]
+
     steps:
     - name: Download Unit Coverage Result
       uses: actions/download-artifact@v3
