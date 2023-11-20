@@ -11,6 +11,7 @@ import (
 	"os"
 	"path"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/golang-migrate/migrate/v4"
@@ -77,7 +78,11 @@ type ComplianceEventsAPIReconciler struct {
 	Scheme *k8sruntime.Scheme
 	// TempDir is used for temporary files such as a custom CA to use to verify the Postgres TLS connection. The
 	// caller is responsible for cleaning it up after the controller stops.
-	TempDir       string
+	TempDir string
+
+	// dbServer is the http server used to accept requests from other clients and pass them on to Postgres
+	dbServer databaseAPIServer
+
 	connectionURL string
 }
 
@@ -103,6 +108,8 @@ func (r *ComplianceEventsAPIReconciler) Reconcile(ctx context.Context, request c
 	err := r.Get(ctx, request.NamespacedName, &dbSecret)
 	if err != nil {
 		if k8serrors.IsNotFound(err) {
+			r.dbServer.Stop()
+
 			return reconcile.Result{}, nil
 		}
 
@@ -111,6 +118,8 @@ func (r *ComplianceEventsAPIReconciler) Reconcile(ctx context.Context, request c
 
 	parsedConnectionURL, err := parseDBSecret(&dbSecret, r.TempDir)
 	if errors.Is(err, ErrInvalidDBSecret) {
+		r.dbServer.Stop()
+
 		log.Error(err, "Will retry once the invalid secret is updated")
 
 		return reconcile.Result{}, nil
@@ -123,6 +132,8 @@ func (r *ComplianceEventsAPIReconciler) Reconcile(ctx context.Context, request c
 	// r.connectionURL is only ever set if the database migration succeeded previously so if the URL is the same then
 	// skip any further work.
 	if r.connectionURL == parsedConnectionURL {
+		r.dbServer.Start(r.connectionURL) // ensure it is running
+
 		return reconcile.Result{}, nil
 	}
 
@@ -132,6 +143,8 @@ func (r *ComplianceEventsAPIReconciler) Reconcile(ctx context.Context, request c
 		log.Error(err, msg)
 
 		_ = r.sendDBErrorEvent(ctx, &dbSecret, msg)
+
+		r.dbServer.Stop()
 
 		return reconcile.Result{RequeueAfter: 30 * time.Second}, nil
 	}
@@ -149,6 +162,8 @@ func (r *ComplianceEventsAPIReconciler) Reconcile(ctx context.Context, request c
 
 		_ = r.sendDBErrorEvent(ctx, &dbSecret, msg)
 
+		r.dbServer.Stop()
+
 		return reconcile.Result{}, nil
 	} else {
 		// The errors don't need to be checked because we know the database migration was successful so there is a
@@ -161,6 +176,8 @@ func (r *ComplianceEventsAPIReconciler) Reconcile(ctx context.Context, request c
 	}
 
 	r.connectionURL = parsedConnectionURL
+
+	r.dbServer.Start(r.connectionURL)
 
 	return reconcile.Result{}, nil
 }
@@ -334,9 +351,10 @@ func StartManager(ctx context.Context, k8sConfig *rest.Config, enableLeaderElect
 	}
 
 	if err = (&ComplianceEventsAPIReconciler{
-		Client:  complianceEventsMgr.GetClient(),
-		Scheme:  complianceEventsMgr.GetScheme(),
-		TempDir: tempDir,
+		Client:   complianceEventsMgr.GetClient(),
+		Scheme:   complianceEventsMgr.GetScheme(),
+		TempDir:  tempDir,
+		dbServer: databaseAPIServer{Lock: &sync.Mutex{}},
 	}).SetupWithManager(complianceEventsMgr); err != nil {
 		return fmt.Errorf("%w: %w", ErrCouldNotStart, err)
 	}
