@@ -44,23 +44,26 @@ func getTableNames(db *sql.DB) ([]string, error) {
 var _ = Describe("Test policy webhook", Label("compliance-events-api"), Ordered, func() {
 	var k8sConfig *rest.Config
 	var db *sql.DB
-	var testCtx context.Context
-	var testCtxCancel context.CancelFunc
 
-	BeforeAll(func() {
+	BeforeAll(func(ctx context.Context) {
 		var err error
 
 		k8sConfig, err = LoadConfig("", "", "")
 		Expect(err).ToNot(HaveOccurred())
 
 		db, err = sql.Open("postgres", "postgresql://grc:grc@localhost:5432/ocm-compliance-history?sslmode=disable")
+		DeferCleanup(func() {
+			if db == nil {
+				return
+			}
+
+			Expect(db.Close()).To(Succeed())
+		})
+
 		Expect(err).ToNot(HaveOccurred())
 
 		Expect(db.Ping()).To(Succeed())
-	})
 
-	BeforeEach(func() {
-		testCtx, testCtxCancel = context.WithCancel(context.Background())
 		// Drop all tables to start fresh
 		tableNameRows, err := db.Query("SELECT tablename FROM pg_tables WHERE schemaname = current_schema()")
 		Expect(err).ToNot(HaveOccurred())
@@ -71,36 +74,26 @@ var _ = Describe("Test policy webhook", Label("compliance-events-api"), Ordered,
 		Expect(err).ToNot(HaveOccurred())
 
 		for _, tableName := range tableNames {
-			_, err := db.ExecContext(testCtx, "DROP TABLE IF EXISTS "+tableName+" CASCADE")
+			_, err := db.ExecContext(ctx, "DROP TABLE IF EXISTS "+tableName+" CASCADE")
 			Expect(err).ToNot(HaveOccurred())
 		}
-	})
 
-	AfterEach(func() {
-		if testCtx != nil {
-			defer testCtxCancel()
-		}
-	})
+		mgrCtx, mgrCancel := context.WithCancel(context.Background())
 
-	AfterAll(func() {
-		if db == nil {
-			return
-		}
+		err = complianceeventsapi.StartManager(mgrCtx, k8sConfig, false)
+		DeferCleanup(func() {
+			mgrCancel()
+		})
 
-		Expect(db.Close()).To(Succeed())
+		Expect(err).ToNot(HaveOccurred())
 	})
 
 	Describe("Test the database migrations", func() {
-		It("Migrates from a clean database", func() {
-			defer testCtxCancel()
-
-			err := complianceeventsapi.StartManager(testCtx, k8sConfig, false)
-			Expect(err).ToNot(HaveOccurred())
-
+		It("Initializes from a fresh database", func(ctx context.Context) {
 			Eventually(func(g Gomega) {
 				tableNames, err := getTableNames(db)
 				g.Expect(err).ToNot(HaveOccurred())
-				g.Expect(tableNames).ToNot(BeEmpty())
+				g.Expect(tableNames).To(ContainElements("clusters", "parent_policies", "policies", "compliance_events"))
 
 				migrationVersionRows := db.QueryRow("SELECT version, dirty FROM schema_migrations")
 				var version int
