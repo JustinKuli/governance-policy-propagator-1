@@ -23,12 +23,12 @@ var (
 type ComplianceEvent struct {
 	Cluster      Cluster       `json:"cluster"`
 	Event        EventDetails  `json:"event"`
-	ParentPolicy *ParentPolicy `json:"parent_policy,omitempty"`
+	ParentPolicy *ParentPolicy `json:"parent_policy,omitempty"` //nolint:tagliatelle
 	Policy       Policy        `json:"policy"`
 }
 
 func (ce ComplianceEvent) Validate() error {
-	errs := make([]error, 0, 0)
+	errs := make([]error, 0)
 
 	if err := ce.Cluster.Validate(); err != nil {
 		errs = append(errs, err)
@@ -52,19 +52,19 @@ func (ce ComplianceEvent) Validate() error {
 }
 
 type Cluster struct {
-	KeyId     int    `db:"id" json:"-" goqu:"skipinsert"`
+	KeyID     int    `db:"id" json:"-" goqu:"skipinsert"`
 	Name      string `db:"name" json:"name"`
-	ClusterId string `db:"cluster_id" json:"cluster_id"`
+	ClusterID string `db:"cluster_id" json:"cluster_id"` //nolint:tagliatelle
 }
 
 func (c Cluster) Validate() error {
-	errs := make([]error, 0, 0)
+	errs := make([]error, 0)
 
 	if c.Name == "" {
 		errs = append(errs, fmt.Errorf("%w: cluster.name", errRequiredFieldNotProvided))
 	}
 
-	if c.ClusterId == "" {
+	if c.ClusterID == "" {
 		errs = append(errs, fmt.Errorf("%w: cluster.cluster_id", errRequiredFieldNotProvided))
 	}
 
@@ -72,18 +72,18 @@ func (c Cluster) Validate() error {
 }
 
 type EventDetails struct {
-	KeyId      int       `db:"id" json:"-" goqu:"skipinsert"`
-	ClusterId  int       `db:"cluster_id" json:"-"`
-	PolicyId   int       `db:"policy_id" json:"-"`
+	KeyID      int       `db:"id" json:"-" goqu:"skipinsert"`
+	ClusterID  int       `db:"cluster_id" json:"-"`
+	PolicyID   int       `db:"policy_id" json:"-"`
 	Compliance string    `db:"compliance" json:"compliance"`
 	Message    string    `db:"message" json:"message"`
 	Timestamp  time.Time `db:"timestamp" json:"timestamp"`
-	Metadata   JsonMap   `db:"metadata" json:"metadata,omitempty"`
-	ReportedBy *string   `db:"reported_by" json:"reported_by,omitempty"`
+	Metadata   JSONMap   `db:"metadata" json:"metadata,omitempty"`
+	ReportedBy *string   `db:"reported_by" json:"reported_by,omitempty"` //nolint:tagliatelle
 }
 
 func (e EventDetails) Validate() error {
-	errs := make([]error, 0, 0)
+	errs := make([]error, 0)
 
 	if e.Compliance == "" {
 		errs = append(errs, fmt.Errorf("%w: event.compliance", errRequiredFieldNotProvided))
@@ -100,7 +100,6 @@ func (e EventDetails) Validate() error {
 		errs = append(errs, fmt.Errorf("%w: event.message", errRequiredFieldNotProvided))
 	}
 
-	// TODO: check this one
 	if e.Timestamp.IsZero() {
 		errs = append(errs, fmt.Errorf("%w: event.timestamp", errRequiredFieldNotProvided))
 	}
@@ -109,7 +108,7 @@ func (e EventDetails) Validate() error {
 }
 
 type ParentPolicy struct {
-	KeyId      int            `db:"id" json:"-" goqu:"skipinsert"`
+	KeyID      int            `db:"id" json:"-" goqu:"skipinsert"`
 	Name       string         `db:"name" json:"name"`
 	Categories pq.StringArray `db:"categories" json:"categories,omitempty"`
 	Controls   pq.StringArray `db:"controls" json:"controls,omitempty"`
@@ -124,7 +123,7 @@ func (p ParentPolicy) Validate() error {
 	return nil
 }
 
-func (p ParentPolicy) Key() parentPolicyKey {
+func (p ParentPolicy) key() parentPolicyKey {
 	cats := make([]string, len(p.Categories))
 	for i, c := range p.Categories {
 		cats[i] = fmt.Sprintf("%q", c) // double-quoted and safely escaped with Go syntax
@@ -156,21 +155,21 @@ type parentPolicyKey struct {
 }
 
 type Policy struct {
-	KeyId          int     `db:"id" json:"-" goqu:"skipinsert"`
+	KeyID          int     `db:"id" json:"-" goqu:"skipinsert"`
 	Kind           string  `db:"kind" json:"kind"`
-	ApiGroup       string  `db:"api_group" json:"apiGroup"`
+	APIGroup       string  `db:"api_group" json:"apiGroup"`
 	Name           string  `db:"name" json:"name"`
 	Namespace      *string `db:"namespace" json:"namespace,omitempty"`
-	ParentPolicyId *int    `db:"parent_policy_id" json:"-"`
+	ParentPolicyID *int    `db:"parent_policy_id" json:"-"`
 	Spec           *string `db:"spec" json:"spec,omitempty"`
-	SpecHash       *string `db:"spec_hash" json:"spec_hash,omitempty"`
+	SpecHash       *string `db:"spec_hash" json:"spec_hash,omitempty"` //nolint:tagliatelle
 	Severity       *string `db:"severity" json:"severity,omitempty"`
 }
 
 func (p *Policy) Validate() error {
-	errs := make([]error, 0, 0)
+	errs := make([]error, 0)
 
-	if p.ApiGroup == "" {
+	if p.APIGroup == "" {
 		errs = append(errs, fmt.Errorf("%w: policy.apiGroup", errRequiredFieldNotProvided))
 	}
 
@@ -205,10 +204,10 @@ func (p *Policy) Validate() error {
 	return errors.Join(errs...)
 }
 
-func (p *Policy) Key() policyKey {
+func (p *Policy) key() policyKey {
 	key := policyKey{
 		Kind:     p.Kind,
-		ApiGroup: p.ApiGroup,
+		APIGroup: p.APIGroup,
 		Name:     p.Name,
 	}
 
@@ -216,8 +215,8 @@ func (p *Policy) Key() policyKey {
 		key.Namespace = *p.Namespace
 	}
 
-	if p.ParentPolicyId != nil {
-		key.ParentId = strconv.Itoa(*p.ParentPolicyId)
+	if p.ParentPolicyID != nil {
+		key.ParentID = strconv.Itoa(*p.ParentPolicyID)
 	}
 
 	if p.SpecHash != nil {
@@ -233,32 +232,32 @@ func (p *Policy) Key() policyKey {
 
 type policyKey struct {
 	Kind      string
-	ApiGroup  string
+	APIGroup  string
 	Name      string
 	Namespace string
-	ParentId  string
+	ParentID  string
 	SpecHash  string
 	Severity  string
 }
 
-type JsonMap map[string]interface{}
+type JSONMap map[string]interface{}
 
-func (j JsonMap) Value() (driver.Value, error) {
+func (j JSONMap) Value() (driver.Value, error) {
 	return json.Marshal(j)
 }
 
-func (j *JsonMap) Scan(src interface{}) error {
+func (j *JSONMap) Scan(src interface{}) error {
 	var source []byte
 
-	switch src.(type) {
+	switch s := src.(type) {
 	case string:
-		source = []byte(src.(string))
+		source = []byte(s)
 	case []byte:
-		source = src.([]byte)
+		source = s
 	case nil:
 		source = nil
 	default:
-		return errors.New("Incompatible type for JsonMap")
+		return errors.New("incompatible type for JsonMap")
 	}
 
 	return json.Unmarshal(source, j)

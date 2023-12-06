@@ -132,9 +132,12 @@ func (r *ComplianceEventsAPIReconciler) Reconcile(ctx context.Context, request c
 	// r.connectionURL is only ever set if the database migration succeeded previously so if the URL is the same then
 	// skip any further work.
 	if r.connectionURL == parsedConnectionURL {
-		r.dbServer.Start(r.connectionURL) // ensure it is running
+		err := r.dbServer.Start(r.connectionURL)
+		if err != nil {
+			log.Error(err, "Unable to start dbServer")
+		}
 
-		return reconcile.Result{}, nil
+		return reconcile.Result{}, err
 	}
 
 	m, err := migrate.NewWithSourceInstance("iofs", migrationsSource, parsedConnectionURL)
@@ -177,9 +180,12 @@ func (r *ComplianceEventsAPIReconciler) Reconcile(ctx context.Context, request c
 
 	r.connectionURL = parsedConnectionURL
 
-	r.dbServer.Start(r.connectionURL)
+	err = r.dbServer.Start(r.connectionURL)
+	if err != nil {
+		log.Error(err, "Unable to start dbServer")
+	}
 
-	return reconcile.Result{}, nil
+	return reconcile.Result{}, err
 }
 
 func parseDBSecret(dbSecret *corev1.Secret, tempDirPath string) (string, error) {

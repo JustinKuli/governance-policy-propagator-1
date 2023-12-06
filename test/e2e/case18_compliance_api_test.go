@@ -112,8 +112,6 @@ var _ = Describe("Test policy webhook", Label("compliance-events-api"), Ordered,
 	})
 
 	Describe("Test POSTing Events", func() {
-		const apiURL = "http://localhost:5480/api/v1/compliance-events"
-
 		Describe("POST one valid event with including all the optional fields", func() {
 			payload := []byte(`{
 				"cluster": {
@@ -143,7 +141,7 @@ var _ = Describe("Test policy webhook", Label("compliance-events-api"), Ordered,
 
 			BeforeAll(func(ctx context.Context) {
 				By("POST the event")
-				Eventually(postEvent(ctx, apiURL, payload), "5s", "1s").ShouldNot(HaveOccurred())
+				Eventually(postEvent(ctx, payload), "5s", "1s").ShouldNot(HaveOccurred())
 			})
 
 			It("Should have created the cluster in a table", func() {
@@ -155,9 +153,9 @@ var _ = Describe("Test policy webhook", Label("compliance-events-api"), Ordered,
 					var (
 						id        int
 						name      string
-						clusterId string
+						clusterID string
 					)
-					err := rows.Scan(&id, &name, &clusterId)
+					err := rows.Scan(&id, &name, &clusterID)
 					Expect(err).ToNot(HaveOccurred())
 
 					Expect(id).NotTo(Equal(0))
@@ -235,15 +233,16 @@ var _ = Describe("Test policy webhook", Label("compliance-events-api"), Ordered,
 			})
 
 			It("Should have created the event in a table", func() {
-				rows, err := db.Query("SELECT * FROM compliance_events WHERE timestamp = $1", "2023-01-01T01:01:01.111Z")
+				rows, err := db.Query("SELECT * FROM compliance_events WHERE timestamp = $1",
+					"2023-01-01T01:01:01.111Z")
 				Expect(err).ToNot(HaveOccurred())
 
 				count := 0
 				for rows.Next() {
 					var (
 						id         int
-						clusterId  int
-						policyId   int
+						clusterID  int
+						policyID   int
 						compliance string
 						message    string
 						timestamp  string
@@ -251,12 +250,13 @@ var _ = Describe("Test policy webhook", Label("compliance-events-api"), Ordered,
 						reportedBy *string
 					)
 
-					err := rows.Scan(&id, &clusterId, &policyId, &compliance, &message, &timestamp, &metadata, &reportedBy)
+					err := rows.Scan(&id, &clusterID, &policyID, &compliance, &message, &timestamp,
+						&metadata, &reportedBy)
 					Expect(err).ToNot(HaveOccurred())
 
 					Expect(id).NotTo(Equal(0))
-					Expect(clusterId).NotTo(Equal(0))
-					Expect(policyId).NotTo(Equal(0))
+					Expect(clusterID).NotTo(Equal(0))
+					Expect(policyID).NotTo(Equal(0))
 					Expect(compliance).To(Equal("NonCompliant"))
 					Expect(message).To(Equal("configmaps [etcd] not found in namespace default"))
 					Expect(timestamp).To(Equal("2023-01-01T01:01:01.111Z"))
@@ -310,8 +310,8 @@ var _ = Describe("Test policy webhook", Label("compliance-events-api"), Ordered,
 
 			BeforeAll(func(ctx context.Context) {
 				By("POST the events")
-				Eventually(postEvent(ctx, apiURL, payload1), "5s", "1s").ShouldNot(HaveOccurred())
-				Eventually(postEvent(ctx, apiURL, payload2), "5s", "1s").ShouldNot(HaveOccurred())
+				Eventually(postEvent(ctx, payload1), "5s", "1s").ShouldNot(HaveOccurred())
+				Eventually(postEvent(ctx, payload2), "5s", "1s").ShouldNot(HaveOccurred())
 			})
 
 			It("Should have created both clusters in a table", func() {
@@ -324,9 +324,9 @@ var _ = Describe("Test policy webhook", Label("compliance-events-api"), Ordered,
 					var (
 						id        int
 						name      string
-						clusterId string
+						clusterID string
 					)
-					err := rows.Scan(&id, &name, &clusterId)
+					err := rows.Scan(&id, &name, &clusterID)
 					Expect(err).ToNot(HaveOccurred())
 
 					Expect(id).NotTo(Equal(0))
@@ -369,15 +369,16 @@ var _ = Describe("Test policy webhook", Label("compliance-events-api"), Ordered,
 			})
 
 			It("Should have created both events in a table", func() {
-				rows, err := db.Query("SELECT * FROM compliance_events WHERE timestamp = $1", "2023-02-02T02:02:02.222Z")
+				rows, err := db.Query("SELECT * FROM compliance_events WHERE timestamp = $1",
+					"2023-02-02T02:02:02.222Z")
 				Expect(err).ToNot(HaveOccurred())
 
 				messages := make([]string, 0)
 				for rows.Next() {
 					var (
 						id         int
-						clusterId  int
-						policyId   int
+						clusterID  int
+						policyID   int
 						compliance string
 						message    string
 						timestamp  string
@@ -385,12 +386,13 @@ var _ = Describe("Test policy webhook", Label("compliance-events-api"), Ordered,
 						reportedBy *string
 					)
 
-					err := rows.Scan(&id, &clusterId, &policyId, &compliance, &message, &timestamp, &metadata, &reportedBy)
+					err := rows.Scan(&id, &clusterID, &policyID, &compliance, &message, &timestamp,
+						&metadata, &reportedBy)
 					Expect(err).ToNot(HaveOccurred())
 
 					Expect(id).NotTo(Equal(0))
-					Expect(clusterId).NotTo(Equal(0))
-					Expect(policyId).NotTo(Equal(0))
+					Expect(clusterID).NotTo(Equal(0))
+					Expect(policyID).NotTo(Equal(0))
 
 					messages = append(messages, message)
 				}
@@ -451,8 +453,8 @@ var _ = Describe("Test policy webhook", Label("compliance-events-api"), Ordered,
 
 			BeforeAll(func(ctx context.Context) {
 				By("POST the events")
-				Eventually(postEvent(ctx, apiURL, payload1), "5s", "1s").ShouldNot(HaveOccurred())
-				Eventually(postEvent(ctx, apiURL, payload2), "5s", "1s").ShouldNot(HaveOccurred())
+				Eventually(postEvent(ctx, payload1), "5s", "1s").ShouldNot(HaveOccurred())
+				Eventually(postEvent(ctx, payload2), "5s", "1s").ShouldNot(HaveOccurred())
 			})
 
 			It("Should have only created one cluster in the table", func() {
@@ -464,9 +466,9 @@ var _ = Describe("Test policy webhook", Label("compliance-events-api"), Ordered,
 					var (
 						id        int
 						name      string
-						clusterId string
+						clusterID string
 					)
-					err := rows.Scan(&id, &name, &clusterId)
+					err := rows.Scan(&id, &name, &clusterID)
 					Expect(err).ToNot(HaveOccurred())
 
 					Expect(id).NotTo(Equal(0))
@@ -532,15 +534,16 @@ var _ = Describe("Test policy webhook", Label("compliance-events-api"), Ordered,
 			})
 
 			It("Should have created both events in a table", func() {
-				rows, err := db.Query("SELECT * FROM compliance_events WHERE message = $1", "configmaps [common] not found in namespace default")
+				rows, err := db.Query("SELECT * FROM compliance_events WHERE message = $1",
+					"configmaps [common] not found in namespace default")
 				Expect(err).ToNot(HaveOccurred())
 
 				timestamps := make([]string, 0)
 				for rows.Next() {
 					var (
 						id         int
-						clusterId  int
-						policyId   int
+						clusterID  int
+						policyID   int
 						compliance string
 						message    string
 						timestamp  string
@@ -548,12 +551,13 @@ var _ = Describe("Test policy webhook", Label("compliance-events-api"), Ordered,
 						reportedBy *string
 					)
 
-					err := rows.Scan(&id, &clusterId, &policyId, &compliance, &message, &timestamp, &metadata, &reportedBy)
+					err := rows.Scan(&id, &clusterID, &policyID, &compliance, &message, &timestamp,
+						&metadata, &reportedBy)
 					Expect(err).ToNot(HaveOccurred())
 
 					Expect(id).NotTo(Equal(0))
-					Expect(clusterId).NotTo(Equal(0))
-					Expect(policyId).NotTo(Equal(0))
+					Expect(clusterID).NotTo(Equal(0))
+					Expect(policyID).NotTo(Equal(0))
 
 					timestamps = append(timestamps, timestamp)
 				}
@@ -637,9 +641,9 @@ var _ = Describe("Test policy webhook", Label("compliance-events-api"), Ordered,
 
 			BeforeAll(func(ctx context.Context) {
 				By("POST the events")
-				Eventually(postEvent(ctx, apiURL, payload1), "5s", "1s").ShouldNot(HaveOccurred())
-				Eventually(postEvent(ctx, apiURL, payload2), "5s", "1s").ShouldNot(HaveOccurred())
-				Eventually(postEvent(ctx, apiURL, payload3), "5s", "1s").ShouldNot(HaveOccurred())
+				Eventually(postEvent(ctx, payload1), "5s", "1s").ShouldNot(HaveOccurred())
+				Eventually(postEvent(ctx, payload2), "5s", "1s").ShouldNot(HaveOccurred())
+				Eventually(postEvent(ctx, payload3), "5s", "1s").ShouldNot(HaveOccurred())
 			})
 
 			It("Should have created two parent policies", func() {
@@ -708,20 +712,110 @@ var _ = Describe("Test policy webhook", Label("compliance-events-api"), Ordered,
 				Expect(hashes[0]).To(Equal(hashes[1]))
 			})
 		})
+
+		Describe("POST invalid events", func() {
+			_ = []byte(`{
+				"cluster": {
+					"name": "validity-test",
+					"cluster_id": "test-validity-fake-uuid"
+				},
+				"parent_policy": {
+					"name": "validity-parent"
+				},
+				"policy": {
+					"apiGroup": "policy.open-cluster-management.io",
+					"kind": "ConfigurationPolicy",
+					"name": "validity",
+					"spec": "{\"test\":\"validity\",\"severity\":\"low\"}"
+				},
+				"event": {
+					"compliance": "Compliant",
+					"message": "configmaps [valid] valid in namespace valid",
+					"timestamp": "2023-09-09T09:09:09.999Z"
+				}
+			}`)
+
+			It("should require the cluster to be specified", func(ctx context.Context) {
+				Eventually(postEvent(ctx, []byte(`{
+					"parent_policy": {
+						"name": "validity-parent"
+					},
+					"policy": {
+						"apiGroup": "policy.open-cluster-management.io",
+						"kind": "ConfigurationPolicy",
+						"name": "validity",
+						"spec": "{\"test\":\"validity\",\"severity\":\"low\"}"
+					},
+					"event": {
+						"compliance": "Compliant",
+						"message": "configmaps [valid] valid in namespace valid",
+						"timestamp": "2023-09-09T09:09:09.999Z"
+					}
+				}`)), "5s", "1s").Should(MatchError("Got non-200 status code 400"))
+			})
+
+			It("should require the event time to be specified", func(ctx context.Context) {
+				Eventually(postEvent(ctx, []byte(`{
+					"cluster": {
+						"name": "validity-test",
+						"cluster_id": "test-validity-fake-uuid"
+					},
+					"parent_policy": {
+						"name": "validity-parent"
+					},
+					"policy": {
+						"apiGroup": "policy.open-cluster-management.io",
+						"kind": "ConfigurationPolicy",
+						"name": "validity",
+						"spec": "{\"test\":\"validity\",\"severity\":\"low\"}"
+					},
+					"event": {
+						"compliance": "Compliant",
+						"message": "configmaps [valid] valid in namespace valid"
+					}
+				}`)), "5s", "1s").Should(MatchError("Got non-200 status code 400"))
+			})
+
+			It("should require the policy spec and hash to match", func(ctx context.Context) {
+				Eventually(postEvent(ctx, []byte(`{
+					"cluster": {
+						"name": "validity-test",
+						"cluster_id": "test-validity-fake-uuid"
+					},
+					"parent_policy": {
+						"name": "validity-parent"
+					},
+					"policy": {
+						"apiGroup": "policy.open-cluster-management.io",
+						"kind": "ConfigurationPolicy",
+						"name": "validity",
+						"spec": "{\"test\":\"validity\",\"severity\":\"low\"}",
+						"spec_hash": "foobar"
+					},
+					"event": {
+						"compliance": "Compliant",
+						"message": "configmaps [valid] valid in namespace valid",
+						"timestamp": "2023-09-09T09:09:09.999Z"
+					}
+				}`)), "5s", "1s").Should(MatchError("Got non-200 status code 400"))
+			})
+		})
 	})
 })
 
-func postEvent(ctx context.Context, apiURL string, payload []byte) error {
-	req, err := http.NewRequestWithContext(ctx, "POST", apiURL, bytes.NewBuffer(payload))
+func postEvent(ctx context.Context, payload []byte) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		"http://localhost:5480/api/v1/compliance-events", bytes.NewBuffer(payload))
 	if err != nil {
 		return err
 	}
 
 	req.Header.Set("Content-Type", "application/json")
 
-	errs := make([]error, 0, 0)
+	errs := make([]error, 0)
 
 	client := &http.Client{}
+
 	resp, err := client.Do(req)
 	if err != nil {
 		errs = append(errs, err)
@@ -730,14 +824,12 @@ func postEvent(ctx context.Context, apiURL string, payload []byte) error {
 	if resp != nil {
 		defer resp.Body.Close()
 
-		fmt.Println("Response Status:", resp.Status)
-		body, err := io.ReadAll(resp.Body)
+		_, err := io.ReadAll(resp.Body)
 		if err != nil {
 			errs = append(errs, err)
 		}
-		fmt.Println("Response Body:", string(body))
 
-		if resp.StatusCode != 200 {
+		if resp.StatusCode != http.StatusOK {
 			errs = append(errs, fmt.Errorf("Got non-200 status code %v", resp.StatusCode))
 		}
 	}

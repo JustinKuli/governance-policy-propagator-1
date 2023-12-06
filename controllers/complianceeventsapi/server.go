@@ -7,14 +7,13 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
 	"sync"
 	"time"
 
 	"github.com/doug-martin/goqu/v9"
-	_ "github.com/doug-martin/goqu/v9/dialect/postgres"
+	_ "github.com/doug-martin/goqu/v9/dialect/postgres" // blank import the dialect driver
 	_ "github.com/lib/pq"
 )
 
@@ -71,7 +70,7 @@ func (s *databaseAPIServer) Start(dbURL string) error {
 	go func() {
 		err := s.server.ListenAndServe()
 		if err != nil && err != http.ErrServerClosed {
-			fmt.Println(err, "Error starting compliance events api server")
+			log.Error(err, "Error starting compliance events api server")
 		}
 	}()
 
@@ -89,8 +88,8 @@ func (s *databaseAPIServer) Stop() {
 		return
 	}
 
-	if err := s.server.Shutdown(nil); err != nil {
-		fmt.Println(err, "Error stopping compliance events api server")
+	if err := s.server.Shutdown(context.TODO()); err != nil {
+		log.Error(err, "Error stopping compliance events api server")
 	}
 
 	s.isRunning = false
@@ -100,22 +99,23 @@ func postComplianceEvent(goquDB *goqu.Database) func(http.ResponseWriter, *http.
 	return func(w http.ResponseWriter, r *http.Request) {
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
-			fmt.Println(err, "error reading")
+			log.Error(err, "error reading")
 			http.Error(w, "Error reading request body", http.StatusBadRequest)
+
 			return
 		}
 
 		reqEvent := &ComplianceEvent{}
 
 		if err := json.Unmarshal(body, reqEvent); err != nil {
-			fmt.Println(err, "error unmarshalling")
+			log.Error(err, "error unmarshalling")
 			http.Error(w, "Incorrectly formatted request body", http.StatusBadRequest)
 
 			return
 		}
 
 		if err := reqEvent.Validate(); err != nil {
-			fmt.Println(err, "error validating")
+			log.Error(err, "error validating")
 			http.Error(w, "Invalid request body", http.StatusBadRequest)
 
 			return
@@ -123,43 +123,41 @@ func postComplianceEvent(goquDB *goqu.Database) func(http.ResponseWriter, *http.
 
 		clusterFK, err := getClusterForeignKey(r.Context(), goquDB, reqEvent.Cluster)
 		if err != nil {
-			fmt.Println(err, "error getting cluster foreign key")
+			log.Error(err, "error getting cluster foreign key")
 			http.Error(w, "Internal Error", http.StatusInternalServerError)
 
 			return
 		}
 
-		reqEvent.Event.ClusterId = clusterFK
+		reqEvent.Event.ClusterID = clusterFK
 
 		if reqEvent.ParentPolicy != nil {
 			pfk, err := getParentPolicyForeignKey(r.Context(), goquDB, *reqEvent.ParentPolicy)
 			if err != nil {
-				fmt.Println(err, "error getting parent policy foreign key")
+				log.Error(err, "error getting parent policy foreign key")
 				http.Error(w, "Internal Error", http.StatusInternalServerError)
 
 				return
 			}
 
-			reqEvent.Policy.ParentPolicyId = &pfk
+			reqEvent.Policy.ParentPolicyID = &pfk
 		}
 
 		policyFK, err := getPolicyForeignKey(r.Context(), goquDB, reqEvent.Policy)
 		if err != nil {
-			fmt.Println(err, "error getting policy foreign key")
+			log.Error(err, "error getting policy foreign key")
 			http.Error(w, "Internal Error", http.StatusInternalServerError)
 
 			return
 		}
 
-		reqEvent.Event.PolicyId = policyFK
+		reqEvent.Event.PolicyID = policyFK
 
 		insert := goquDB.Insert("compliance_events").Rows(reqEvent.Event).Executor()
 
-		fmt.Println(insert.ToSQL())
-
 		_, err = insert.Exec()
 		if err != nil {
-			fmt.Println(err, "error inserting compliance event")
+			log.Error(err, "error inserting compliance event")
 			http.Error(w, "Internal Error", http.StatusInternalServerError)
 		}
 	}
@@ -174,14 +172,15 @@ func postComplianceEvent(goquDB *goqu.Database) func(http.ResponseWriter, *http.
 
 func getClusterForeignKey(ctx context.Context, goquDB *goqu.Database, cluster Cluster) (int, error) {
 	// Check cache
-	key, ok := clusterKeyCache.Load(cluster.ClusterId)
+	key, ok := clusterKeyCache.Load(cluster.ClusterID)
 	if ok {
 		return key.(int), nil
 	}
 
 	foundCluster := new(Cluster)
+
 	found, err := goquDB.From("clusters").
-		Where(goqu.Ex{"cluster_id": cluster.ClusterId}).
+		Where(goqu.Ex{"cluster_id": cluster.ClusterID}).
 		ScanStructContext(ctx, foundCluster)
 	if err != nil {
 		return 0, err
@@ -189,9 +188,9 @@ func getClusterForeignKey(ctx context.Context, goquDB *goqu.Database, cluster Cl
 
 	// If the row already exists
 	if found {
-		clusterKeyCache.Store(cluster.ClusterId, foundCluster.KeyId)
+		clusterKeyCache.Store(cluster.ClusterID, foundCluster.KeyID)
 
-		return foundCluster.KeyId, nil
+		return foundCluster.KeyID, nil
 	}
 
 	// Otherwise, create a new row in the table
@@ -202,14 +201,15 @@ func getClusterForeignKey(ctx context.Context, goquDB *goqu.Database, cluster Cl
 		return 0, err
 	}
 
-	clusterKeyCache.Store(cluster.ClusterId, *id)
+	clusterKeyCache.Store(cluster.ClusterID, *id)
 
 	return *id, nil
 }
 
 func getParentPolicyForeignKey(ctx context.Context, goquDB *goqu.Database, parent ParentPolicy) (int, error) {
 	// Check cache
-	parKey := parent.Key()
+	parKey := parent.key()
+
 	key, ok := parentPolicyKeyCache.Load(parKey)
 	if ok {
 		return key.(int), nil
@@ -235,8 +235,6 @@ func getParentPolicyForeignKey(ctx context.Context, goquDB *goqu.Database, paren
 
 	qu := goquDB.From("parent_policies").Where(uniqueFieldsMatch)
 
-	fmt.Println(qu.ToSQL())
-
 	found, err := qu.ScanStructContext(ctx, foundParent)
 	if err != nil {
 		return 0, err
@@ -244,9 +242,9 @@ func getParentPolicyForeignKey(ctx context.Context, goquDB *goqu.Database, paren
 
 	// If the row already exists
 	if found {
-		parentPolicyKeyCache.Store(parKey, foundParent.KeyId)
+		parentPolicyKeyCache.Store(parKey, foundParent.KeyID)
 
-		return foundParent.KeyId, nil
+		return foundParent.KeyID, nil
 	}
 
 	// Otherwise, create a new row in the table
@@ -289,7 +287,8 @@ func getPolicyForeignKey(ctx context.Context, goquDB *goqu.Database, pol Policy)
 	}
 
 	// Check cache
-	polKey := pol.Key()
+	polKey := pol.key()
+
 	key, ok := policyKeyCache.Load(polKey)
 	if ok {
 		return key.(int), nil
@@ -299,7 +298,7 @@ func getPolicyForeignKey(ctx context.Context, goquDB *goqu.Database, pol Policy)
 
 	uniqueFieldsMatch := goqu.Ex{
 		"kind":      pol.Kind,
-		"api_group": pol.ApiGroup,
+		"api_group": pol.APIGroup,
 		"name":      pol.Name,
 		"spec_hash": pol.SpecHash,
 	}
@@ -308,8 +307,8 @@ func getPolicyForeignKey(ctx context.Context, goquDB *goqu.Database, pol Policy)
 		uniqueFieldsMatch["namespace"] = *pol.Namespace
 	}
 
-	if pol.ParentPolicyId != nil {
-		uniqueFieldsMatch["parent_policy_id"] = *pol.ParentPolicyId
+	if pol.ParentPolicyID != nil {
+		uniqueFieldsMatch["parent_policy_id"] = *pol.ParentPolicyID
 	}
 
 	if pol.Severity != nil {
@@ -323,15 +322,13 @@ func getPolicyForeignKey(ctx context.Context, goquDB *goqu.Database, pol Policy)
 
 	// If the row already exists
 	if found {
-		policyKeyCache.Store(polKey, foundPolicy.KeyId)
+		policyKeyCache.Store(polKey, foundPolicy.KeyID)
 
-		return foundPolicy.KeyId, nil
+		return foundPolicy.KeyID, nil
 	}
 
 	// Otherwise, create a new row in the table
 	insert := goquDB.Insert("policies").Returning("id").Rows(pol).Executor()
-
-	fmt.Println(insert.ToSQL())
 
 	id := new(int)
 	if _, err := insert.ScanValContext(ctx, id); err != nil {
